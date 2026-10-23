@@ -1,0 +1,10 @@
+[package]
+name = "encryptdrive-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "GUI-independent EncryptDrive product identity and readiness API"
+
+[lib]
+path = "src/lib.rs"

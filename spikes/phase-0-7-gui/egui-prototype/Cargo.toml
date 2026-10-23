@@ -1,0 +1,14 @@
+[package]
+name = "encryptdrive-eframe-spike"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+
+[dependencies]
+encryptdrive-spike-common = { path = "../common" }
+eframe = { version = "=0.37.0", default-features = false, features = ["accesskit", "default_fonts", "system_fonts", "wgpu"] }
+egui_extras = { version = "=0.37.0", default-features = false }
+
+[dev-dependencies]
+egui_system_font_provider = "=0.37.0"

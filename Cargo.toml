@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+members = [
+    "apps/encryptdrive-desktop",
+    "crates/vault-format",
+    "crates/vault-crypto",
+    "crates/vault-storage",
+    "crates/encryptdrive-core",
+]
+exclude = [
+    "spikes/phase-0-7-gui/common",
+    "spikes/phase-0-7-gui/egui-prototype",
+    "spikes/phase-0-7-gui/slint-prototype",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+
+[workspace.dependencies]
+eframe = { version = "=0.37.0", default-features = false, features = ["accesskit", "default_fonts", "system_fonts", "wgpu"] }
+egui_extras = { version = "=0.37.0", default-features = false }
+encryptdrive-core = { path = "crates/encryptdrive-core", version = "0.1.0" }

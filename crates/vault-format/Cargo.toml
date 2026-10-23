@@ -1,0 +1,10 @@
+[package]
+name = "vault-format"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Reserved boundary for future EncryptDrive vault-format compatibility work"
+
+[lib]
+path = "src/lib.rs"

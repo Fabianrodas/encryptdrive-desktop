@@ -1,0 +1,397 @@
+import { Button, LineEdit, ListView, Palette } from "std-widgets.slint";
+
+export struct FileRow {
+    id: int,
+    name: string,
+    size: string,
+    modified: string,
+    kind: string,
+    selected: bool,
+    focused: bool,
+    accessible-name: string,
+}
+
+export component MainWindow inherits Window {
+    title: "EncryptDrive — Phase 0.7 Slint prototype";
+    preferred-width: 1180px;
+    preferred-height: 760px;
+    min-width: 780px;
+    min-height: 520px;
+    background: root.canvas;
+    init => { Palette.color-scheme = ColorScheme.light; }
+    changed theme-name => {
+        Palette.color-scheme = root.theme-name == "Dark" ? ColorScheme.dark : ColorScheme.light;
+    }
+    changed dialog-kind => {
+        if root.dialog-kind == "" {
+            search_field.focus();
+        }
+    }
+
+    in-out property <[FileRow]> rows: [];
+    in-out property <string> current-page: "Files";
+    in-out property <string> breadcrumb: "Files";
+    in-out property <[string]> breadcrumb-parts: [];
+    in-out property <string> search-text: "";
+    in-out property <string> query: "";
+    in-out property <string> selected-count: "0 selected";
+    in-out property <string> notice: "";
+    in-out property <bool> notice-is-error: false;
+    in-out property <string> dialog-kind: "";
+    in-out property <string> dialog-title: "";
+    in-out property <string> dialog-copy: "";
+    in-out property <string> dialog-action: "Continue";
+    in-out property <string> form-name: "";
+    in-out property <string> form-error: "";
+    in-out property <bool> operation-running: false;
+    in-out property <string> operation-label: "";
+    in-out property <int> operation-progress: 0;
+    in-out property <string> theme-name: "Light";
+    in-out property <int> list-size: 1000;
+    in-out property <bool> loading: false;
+    in-out property <bool> settings-open: false;
+    in-out property <int> context-id: -1;
+
+    in-out property <color> canvas: #f5f6f8;
+    in-out property <color> surface: #ffffff;
+    in-out property <color> surface-secondary: #eef0f3;
+    in-out property <color> primary-text: #1d2430;
+    in-out property <color> secondary-text: #5b6573;
+    in-out property <color> border: #d7dce3;
+    in-out property <color> accent: #285ea8;
+    in-out property <color> selection: #d7e7fb;
+    in-out property <color> selection-text: #163c68;
+    in-out property <color> hover: #e9eef5;
+    in-out property <color> focus-ring: #155eef;
+    in-out property <color> error: #a12828;
+    in-out property <color> error-surface: #fff0ef;
+    in-out property <color> success: #236b45;
+    in-out property <color> success-surface: #eaf6ef;
+
+    callback navigate-page(string);
+    callback navigate-back();
+    callback navigate-up();
+    callback navigate-crumb(int);
+    callback search-changed(string);
+    callback action(string);
+    callback row-clicked(int, bool, bool);
+    callback row-activated(int);
+    callback row-context(int);
+    callback sort(string);
+    callback key-input(string, bool, bool, bool);
+    callback close-dialog();
+    callback confirm-dialog();
+    callback form-changed(string);
+    callback theme-toggle();
+    callback size-changed(int);
+    callback dismiss-notice();
+
+    FocusScope {
+        key-pressed(event) => {
+            if event.modifiers.control && event.text == Key.F { search_field.focus(); }
+            if event.text == Key.Escape { root.key-input("Escape", event.modifiers.control, event.modifiers.shift, event.modifiers.alt); }
+            else if event.text == Key.Return { root.key-input("Enter", event.modifiers.control, event.modifiers.shift, event.modifiers.alt); }
+            else if event.text == Key.DownArrow { root.key-input("Down", event.modifiers.control, event.modifiers.shift, event.modifiers.alt); }
+            else if event.text == Key.UpArrow { root.key-input("Up", event.modifiers.control, event.modifiers.shift, event.modifiers.alt); }
+            else if event.text == Key.LeftArrow { root.key-input("Left", event.modifiers.control, event.modifiers.shift, event.modifiers.alt); }
+            else if event.text == Key.RightArrow { root.key-input("Right", event.modifiers.control, event.modifiers.shift, event.modifiers.alt); }
+            else if event.text == Key.Delete { root.key-input("Delete", event.modifiers.control, event.modifiers.shift, event.modifiers.alt); }
+            else if event.text == Key.F2 { root.key-input("F2", event.modifiers.control, event.modifiers.shift, event.modifiers.alt); }
+            else if event.text == Key.F10 { root.key-input("F10", event.modifiers.control, event.modifiers.shift, event.modifiers.alt); }
+            else { root.key-input(event.text, event.modifiers.control, event.modifiers.shift, event.modifiers.alt); }
+            accept
+        }
+
+        VerticalLayout {
+            spacing: 0px;
+            Rectangle {
+                height: 52px;
+                background: root.surface;
+                border-width: 1px;
+                border-color: root.border;
+                HorizontalLayout {
+                    padding-left: 18px;
+                    padding-right: 18px;
+                    spacing: 14px;
+                    Text { text: "EncryptDrive"; color: root.primary-text; font-size: 18px; font-weight: 700; vertical-alignment: center; }
+                    Text { text: "Local encrypted files"; color: root.secondary-text; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text { text: "●  Demo account  ·  Synthetic vault"; color: root.success; vertical-alignment: center; accessible-role: text; accessible-label: "Demo account, synthetic vault"; }
+                    Button { text: "Settings"; clicked => { root.action("settings"); } }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 0px;
+                Rectangle {
+                    width: 210px;
+                    background: root.surface;
+                    border-width: 1px;
+                    border-color: root.border;
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 6px;
+                        Text { text: "WORKSPACE"; color: root.secondary-text; font-size: 11px; font-weight: 700; }
+                        Button { text: "▦   Files"; checked: root.current-page == "Files"; clicked => { root.navigate-page("Files"); } }
+                        Button { text: "▱   Trash"; checked: root.current-page == "Trash"; clicked => { root.navigate-page("Trash"); } }
+                        Rectangle { height: 1px; background: root.border; }
+                        Text { text: "ACCOUNT"; color: root.secondary-text; font-size: 11px; font-weight: 700; }
+                        Text { text: "Offline · no network access"; color: root.secondary-text; wrap: word-wrap; }
+                        Rectangle { vertical-stretch: 1; }
+                        Text { text: "Prototype data is synthetic"; color: root.secondary-text; font-size: 11px; wrap: word-wrap; }
+                    }
+                }
+
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 12px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "‹"; enabled: root.current-page == "Files" && root.breadcrumb-parts.length > 1; clicked => { root.navigate-back(); } }
+                        Button { text: "↑"; enabled: root.current-page == "Files" && root.breadcrumb-parts.length > 1; clicked => { root.navigate-up(); } }
+                        HorizontalLayout {
+                            for crumb[index] in root.breadcrumb-parts: Button {
+                                text: crumb;
+                                clicked => { root.navigate-crumb(index); }
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        search_field := LineEdit {
+                            width: 240px;
+                            placeholder-text: "Search files and folders  (Ctrl+F)";
+                            text <=> root.search-text;
+                            edited(text) => { root.search-changed(text); }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "New folder"; enabled: !root.operation-running && root.current-page == "Files"; clicked => { root.action("create-folder"); } }
+                        Button { text: "Import"; enabled: !root.operation-running && root.current-page == "Files"; clicked => { root.action("import"); } }
+                        Button { text: "Export"; enabled: !root.operation-running && root.selected-count != "0 selected"; clicked => { root.action("export"); } }
+                        Button { text: "Rename"; enabled: !root.operation-running && root.selected-count != "0 selected"; clicked => { root.action("rename"); } }
+                        Button { text: "Delete"; enabled: !root.operation-running && root.selected-count != "0 selected"; clicked => { root.action("delete"); } }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: root.selected-count; color: root.secondary-text; vertical-alignment: center; }
+                    }
+
+                    Rectangle {
+                        height: 38px;
+                        background: root.surface-secondary;
+                        border-width: 1px;
+                        border-color: root.border;
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            Button { horizontal-stretch: 1; text: "Name"; clicked => { root.sort("Name"); } }
+                            Button { width: 120px; text: "Size"; clicked => { root.sort("Size"); } }
+                            Button { width: 170px; text: "Modified"; clicked => { root.sort("Modified"); } }
+                        }
+                    }
+
+                    Rectangle {
+                        background: root.surface;
+                        border-width: 1px;
+                        border-color: root.border;
+                        clip: true;
+                        if root.loading: Text { text: "Loading synthetic entries…"; color: root.secondary-text; horizontal-alignment: center; vertical-alignment: center; }
+                        if !root.loading: ListView {
+                            for row[index] in root.rows: Rectangle {
+                                height: 36px;
+                                background: row.selected ? root.selection : (row_touch.has-hover ? root.hover : root.surface);
+                                border-width: row.focused ? 1px : 0px;
+                                border-color: root.focus-ring;
+                                accessible-role: list-item;
+                                accessible-label: row.accessible-name;
+                                accessible-item-selectable: true;
+                                accessible-item-selected: row.selected;
+                                accessible-item-index: index;
+                                accessible-item-count: root.rows.length;
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 8px;
+                                    Text { horizontal-stretch: 1; text: (row.kind == "folder" ? "▰  " : "   ") + row.name; color: row.selected ? root.selection-text : root.primary-text; vertical-alignment: center; overflow: elide; }
+                                    Text { width: 120px; text: row.size; color: root.secondary-text; vertical-alignment: center; }
+                                    Text { width: 170px; text: row.modified; color: root.secondary-text; vertical-alignment: center; }
+                                }
+                                row_touch := TouchArea {
+                                    pointer-event(event) => {
+                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                                            root.row-clicked(row.id, event.modifiers.control, event.modifiers.shift);
+                                        }
+                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                                            root.row-context(row.id);
+                                        }
+                                    }
+                                    double-clicked => { root.row-activated(row.id); }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.operation-running: Rectangle {
+                        height: 56px;
+                        background: root.surface;
+                        border-width: 1px;
+                        border-color: root.border;
+                        accessible-role: progress-indicator;
+                        accessible-label: root.operation-label + ", " + root.operation-progress + "%";
+                        VerticalLayout {
+                            padding: 8px;
+                            spacing: 5px;
+                            HorizontalLayout {
+                                Text { text: root.operation-label; color: root.primary-text; vertical-alignment: center; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Text { text: root.operation-progress + "%"; color: root.secondary-text; vertical-alignment: center; }
+                                Button { text: "Cancel"; clicked => { root.action("cancel-operation"); } }
+                            }
+                            Rectangle {
+                                height: 6px;
+                                background: root.surface-secondary;
+                                Rectangle { width: parent.width * root.operation-progress / 100; height: parent.height; background: root.accent; }
+                            }
+                        }
+                    }
+
+                    if root.notice != "": Rectangle {
+                        height: 42px;
+                        background: root.notice-is-error ? root.error-surface : root.success-surface;
+                        accessible-role: region;
+                        accessible-live-region: polite;
+                        accessible-label: root.notice;
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            Text { text: root.notice; color: root.notice-is-error ? root.error : root.success; vertical-alignment: center; }
+                            Rectangle { horizontal-stretch: 1; }
+                            Button { text: "Dismiss"; clicked => { root.dismiss-notice(); } }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "List size"; color: root.secondary-text; vertical-alignment: center; }
+                        Button { text: "100"; clicked => { root.size-changed(100); } }
+                        Button { text: "1,000"; clicked => { root.size-changed(1000); } }
+                        Button { text: "10,000"; clicked => { root.size-changed(10000); } }
+                        Rectangle { horizontal-stretch: 1; }
+                        Button { text: "Appearance: " + root.theme-name; clicked => { root.theme-toggle(); } }
+                        Text { text: "Offline prototype · no real files"; color: root.secondary-text; vertical-alignment: center; }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.settings-open: Rectangle {
+        x: parent.width - 400px;
+        y: 58px;
+        width: 380px;
+        height: 360px;
+        z: 2;
+        background: root.surface;
+        border-width: 1px;
+        border-color: root.border;
+        VerticalLayout {
+            padding: 16px;
+            spacing: 9px;
+            Text { text: "Settings · prototype controls"; color: root.primary-text; font-size: 17px; font-weight: 700; }
+            Text { text: "All controls operate on deterministic in-memory data."; color: root.secondary-text; wrap: word-wrap; }
+            HorizontalLayout {
+                Text { text: "List size"; color: root.secondary-text; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "100"; clicked => { root.size-changed(100); } }
+                Button { text: "1,000"; clicked => { root.size-changed(1000); } }
+                Button { text: "10,000"; clicked => { root.size-changed(10000); } }
+            }
+            HorizontalLayout {
+                Button { text: "Simulate loading"; enabled: !root.operation-running; clicked => { root.action("simulate-loading"); } }
+                Button { text: "Simulate error"; enabled: !root.operation-running; clicked => { root.action("simulate-error"); } }
+            }
+            HorizontalLayout {
+                Button { text: "Retry list"; enabled: !root.operation-running; clicked => { root.action("retry"); } }
+                Button { text: "Recovery notice"; clicked => { root.action("recovery"); } }
+            }
+            HorizontalLayout {
+                Button { text: "Success operation"; enabled: !root.operation-running; clicked => { root.action("operation-success"); } }
+                Button { text: "Failure operation"; enabled: !root.operation-running; clicked => { root.action("operation-failure"); } }
+            }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Close"; clicked => { root.settings-open = false; } }
+            }
+        }
+    }
+
+    if root.context-id >= 0: Rectangle {
+        x: parent.width - 260px;
+        y: parent.height - 210px;
+        width: 240px;
+        height: 178px;
+        z: 3;
+        background: root.surface;
+        border-width: 1px;
+        border-color: root.border;
+        VerticalLayout {
+            padding: 10px;
+            spacing: 5px;
+            Text { text: "Item actions"; color: root.primary-text; font-weight: 700; }
+            Button { text: "Open / simulated Export"; clicked => { root.action("context-activate"); root.context-id = -1; } }
+            Button { text: "Rename…"; clicked => { root.action("context-rename"); root.context-id = -1; } }
+            Button { text: root.current-page == "Files" ? "Move to Trash…" : "Restore"; clicked => { root.action("context-delete-restore"); root.context-id = -1; } }
+            Button { text: "Close menu"; clicked => { root.context-id = -1; } }
+        }
+    }
+
+    if root.dialog-kind != "": Rectangle {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        background: #00000066;
+        accessible-role: form;
+        accessible-label: root.dialog-title;
+        Rectangle {
+            x: (parent.width - 470px) / 2;
+            y: (parent.height - 250px) / 2;
+            width: 470px;
+            height: 250px;
+            background: root.surface;
+            border-width: 1px;
+            border-color: root.border;
+            FocusScope {
+                width: parent.width;
+                height: parent.height;
+                key-pressed(event) => {
+                    if event.text == Key.Escape { root.close-dialog(); }
+                    accept
+                }
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 10px;
+                    Text { text: root.dialog-title; color: root.primary-text; font-size: 18px; font-weight: 700; }
+                    Text { text: root.dialog-copy; color: root.secondary-text; wrap: word-wrap; }
+                    if root.dialog-kind == "create-folder" || root.dialog-kind == "rename" || root.dialog-kind == "import": LineEdit {
+                        init => { self.focus(); }
+                        text <=> root.form-name;
+                        placeholder-text: "Enter a name";
+                        edited(text) => { root.form-changed(text); }
+                    }
+                    if root.form-error != "": Text { text: root.form-error; color: root.error; accessible-live-region: assertive; }
+                    Rectangle { vertical-stretch: 1; }
+                    HorizontalLayout {
+                        Rectangle { horizontal-stretch: 1; }
+                        Button {
+                            text: "Cancel";
+                            init => {
+                                if root.dialog-kind != "create-folder" && root.dialog-kind != "rename" && root.dialog-kind != "import" { self.focus(); }
+                            }
+                            clicked => { root.close-dialog(); }
+                        }
+                        Button { text: root.dialog-action; primary: true; clicked => { root.confirm-dialog(); } }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,10 @@
+[package]
+name = "vault-crypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Reserved boundary for future EncryptDrive cryptographic implementation"
+
+[lib]
+path = "src/lib.rs"

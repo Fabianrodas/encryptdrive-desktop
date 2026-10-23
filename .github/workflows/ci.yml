@@ -1,0 +1,31 @@
+name: Windows Rust CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          components: clippy, rustfmt
+          targets: x86_64-pc-windows-msvc
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check workspace
+        run: cargo check --workspace --locked
+      - name: Run strict Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Run tests
+        run: cargo test --workspace --locked
+      - name: Build Windows release shell
+        run: cargo build --package encryptdrive-desktop --release --locked
+      - name: Verify workspace boundaries
+        shell: pwsh
+        run: ./scripts/verify-architecture.ps1

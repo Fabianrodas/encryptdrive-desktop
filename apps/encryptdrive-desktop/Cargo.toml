@@ -1,0 +1,21 @@
+[package]
+name = "encryptdrive-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Native Windows shell for EncryptDrive Desktop"
+
+[features]
+default = []
+design-preview = []
+
+[dependencies]
+eframe.workspace = true
+egui_extras.workspace = true
+encryptdrive-core.workspace = true
+
+[[example]]
+name = "preview-benchmark"
+path = "examples/preview-benchmark.rs"
+required-features = ["design-preview"]
