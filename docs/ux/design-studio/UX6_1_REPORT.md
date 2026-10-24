@@ -39,7 +39,7 @@
 
 Trash keeps both commands labelled at 880×600.
 
-The 880 and 960 rows are measured from captures. The 1180 row is computed from the measured widths and the layout rule; its capture failed (section 6).
+All rows come from captures of the final build (section 6).
 
 ## 2. Monitor work area
 
@@ -64,7 +64,16 @@ The 880 and 960 rows are measured from captures. The 1180 row is computed from t
   - an empty work area changes nothing;
   - a read-only call of the real API on this machine, which returned 1536×816.
 
-**Not verified yet:** the fit in a live window. The desktop was in use (section 6). The 100 %, 150 % and 200 % scale factors and a second physical monitor were not available.
+**Live check** (final build, 125 %, bottom taskbar, physical work area 1920×1020). Window rects are as reported by `GetWindowRect` and include the invisible resize borders:
+
+| Requested inner size | Window rect | Result |
+|---|---|---|
+| 880×600 | 1118×797 at 410,165 | Fits, left where Windows centred it |
+| 960×640 | 1218×847 at 360,140 | Fits, left where Windows centred it |
+| 1180×792 | 1493×1020 at 213,0 | Height shrunk to exactly the work area, centred horizontally |
+| 1920×1080 | 1920×1020 at 0,0 | Shrunk to exactly the work area; nothing behind the taskbar |
+
+**Not verified:** a taskbar on another edge, a second monitor, and the 100 %, 150 % and 200 % scale factors.
 
 ## 3. Accessibility
 
@@ -163,21 +172,26 @@ The visual design is unchanged: husky mark, density, typography, inputs, blue fo
 
 ## 6. Captures and build attribution
 
-All captures use `PrintWindow` on the app's own window only. No input was sent.
+All captures use `PrintWindow` on the app's own window only, with no input sent. The owner confirmed the desktop was idle.
 
-| File (`captures/ux61/`) | Content | Build used |
-|---|---|---|
-| `files_overflow_880_light_260d83a.png` | Files, multi-selection, 880×600, Light | Preview at `260d83a`, raw `A11614373CF9BB247643DEDB231D800EB2FC5656C7B5C0E5EDF7455479682DB2` |
-| `files_overflow_960_light_260d83a.png` | Files, multi-selection, 960×640, Light | same |
-| `trash_880_dark_260d83a.png` | Trash, 880×600, Dark | same |
+**Build used for every capture:** `target/ux61-artifacts/encryptdrive-desktop-preview-06f78a8.exe`, raw SHA-256 `53A7F27FD2CD95040EB0FA62E7717F3BD4C49B390EC8762A0FBFA0D3875D1341` (the manifest's preview artifact). I re-hashed it immediately before capturing.
 
-These come from the overflow commit, not from the final `06f78a8` artifact. The later commits change accessibility metadata and how decorative icons are drawn (painted at the same size instead of as labels). That should not change the image, but nobody has compared it with a capture from the final artifact.
+`captures/ux61/` holds 16 files named `<view>_<width>_<theme>_06f78a8.png`:
+- Views: `files` (multi-selection, 4 selected) and `trash`.
+- Widths: 880, 960, 1180 and 1920, requested as 880×600, 960×640, 1180×792 and 1920×1080.
+- Themes: `light` and `dark`.
 
-**Captures not taken:**
-- **1180×792 and 1600×900:** the window was minimized while it was being captured. Those images were discarded.
-- **The overflow menu open:** opening it needs input. This is on the owner checklist.
+What they show:
+- **880 and 960:** Files keeps New folder, Import, Export and Rename labelled, and Move to Trash moves into ⋯. Trash keeps both commands labelled.
+- **1180 and 1920:** every command is inline and there is no More button. Search grows to 320 px.
+- **Both themes:** same layout; disabled, selected and destructive states are visible.
+- `trash_880_light` shows a hover highlight on one row, because the idle mouse pointer happened to rest there. It is incidental; no input was sent.
 
-**Incident.** While these captures ran, the owner was using Firefox. Each launch took the foreground for about two seconds, and the logs show one window minimized and one closed shortly after appearing. I stopped launching windows as soon as this showed up in the logs. Capturing the final artifact needs an idle desktop and the owner's go-ahead.
+**Earlier captures.** The three captures taken earlier from the `260d83a` build were removed. Their content is pixel-identical to the final build's; only the title bar differs, which is the active or inactive window state.
+
+**Not captured:** the overflow menu open, because opening it needs input. It is on the owner checklist.
+
+**Incident during the earlier attempt.** The owner was using Firefox at the time. Each launch took the foreground for about two seconds, and the logs show one window minimized and one closed shortly after appearing. I stopped launching windows and waited for the owner's go-ahead before taking the captures above.
 
 ## 7. Commits
 
@@ -187,16 +201,16 @@ These come from the overflow commit, not from the final `06f78a8` artifact. The 
 | `59aa866` | fix(windows): respect monitor work area |
 | `06f78a8` | fix(a11y): improve explorer accessible semantics |
 | `3692f76` | test(ui): cover select-all scope with 10,000 entries (test code only; release binaries unchanged) |
-| this commit | docs(ux): reconcile UX6 audit and build evidence |
+| `8339d47` | docs(ux): reconcile UX6 audit and build evidence |
+| this commit | docs(ux): add final-build captures to the UX6.1 report |
 
 ## 8. Owner-assisted checklist
 
 | Item | State |
 |---|---|
-| Overflow layout at 880 and 960 (Light, Files; Dark, Trash) | **Verified** (captures from `260d83a`) |
-| Light/Dark captures of the final `06f78a8` preview at 880, 960, 1180 and 1920 | **Pending.** Needs an idle desktop. |
+| Light/Dark captures of the final `06f78a8` preview at 880, 960, 1180 and 1920 (Files and Trash) | **Verified** (16 captures, section 6) |
 | More menu: open with mouse, Enter and Space; arrow and Tab through items; Escape returns focus to More; disabled items when nothing is selected; danger colour on Delete permanently | **Pending.** Needs real input. |
-| Window fit at startup with the taskbar on the bottom, side and top | **Pending.** Code and tests in place. |
+| Window fit at startup | **Verified** with a bottom taskbar (section 2). **Pending** with the taskbar on a side or the top. |
 | Second monitor, including one left of or above the primary | **Blocked.** No second display here. |
 | 100 %, 150 % and 200 % scaling | **Blocked.** It is a system setting, so I did not change it. |
 | High Contrast | **Pending.** Owner. |
