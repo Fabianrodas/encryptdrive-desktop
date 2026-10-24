@@ -191,7 +191,9 @@ What they show:
 
 **Not captured:** the overflow menu open, because opening it needs input. It is on the owner checklist.
 
-**Incident during the earlier attempt.** The owner was using Firefox at the time. Each launch took the foreground for about two seconds, and the logs show one window minimized and one closed shortly after appearing. I stopped launching windows and waited for the owner's go-ahead before taking the captures above.
+**Windows minimized during the earlier attempt.** Firefox was open and in the foreground before each launch. In several launches the app window took the foreground and was then minimized after about two seconds, as Firefox took the foreground back. In one launch the window disappeared. Those launches produced the failed captures. Whether this was owner activity or Firefox taking focus on its own could not be determined. I had treated it as owner activity, stopped launching windows, and waited for the owner's go-ahead.
+
+**Re-check with Firefox closed and the owner not touching the PC.** I launched the final build 12 times: 4 times at 960×640, and twice each at 880×600, 1180×792, 1600×900 and 1920×1080. Its window state and the foreground app were logged every 250 ms for 6–8 s. The window was never minimized or closed, and the app kept the foreground until it was terminated. The app therefore does not minimize itself.
 
 ## 7. Commits
 
