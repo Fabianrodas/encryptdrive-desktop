@@ -4,6 +4,11 @@
 **Direction:** the owner chose *balanced density*. UX5 is refined, not replaced.
 **Status:** candidate ready for independent Codex review. This is not owner approval.
 
+> **UX6.1 follow-up** (see [UX6_1_REPORT.md](UX6_1_REPORT.md)):
+> - The progressive icon-only command bar described below was replaced by a measured "More" overflow menu.
+> - Window fitting now uses the monitor work area.
+> - Neither SHA-256 recorded under "Tests and builds" can be reproduced by a rebuild. Every MSVC link writes a new timestamp and PDB GUID, and both variants overwrite the same `target/release` path. Compare builds with the link-normalised hash instead.
+
 ## References
 
 - [Microsoft: content layout and spacing](https://learn.microsoft.com/en-us/windows/apps/design/basics/content-basics). Gaps of 8 px between controls, 12 px between areas, 16 px to a surface edge. Body text 14 px; Standard sizing balances density and comfort; compact sizing is for dense, pointer-only regions.
