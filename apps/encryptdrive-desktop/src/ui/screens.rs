@@ -171,7 +171,7 @@ impl DesktopApp {
                                     ui.set_width(ui.available_width());
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = Geometry::SPACE_2;
-                                        ui.label(Icon::Info.rich_text(palette.accent, Geometry::ICON_SIZE));
+                                        crate::design::components::decorative_icon(ui, Icon::Info, palette.accent, Geometry::ICON_SIZE);
                                         ui.label(RichText::new(message).size(TypeScale::HELPER).color(palette.text));
                                     });
                                 });
@@ -196,7 +196,12 @@ fn header(ui: &mut egui::Ui, icon: Icon, title: &str, description: &str, palette
         .corner_radius(CornerRadius::same(Geometry::SURFACE_RADIUS))
         .inner_margin(Margin::same(Geometry::SPACE_2 as i8 + 2))
         .show(ui, |ui| {
-            ui.label(icon.rich_text(palette.accent, Geometry::MAJOR_ICON_SIZE + 4.0));
+            crate::design::components::decorative_icon(
+                ui,
+                icon,
+                palette.accent,
+                Geometry::MAJOR_ICON_SIZE + 4.0,
+            );
         });
     ui.add_space(Geometry::SPACE_4);
     ui.label(

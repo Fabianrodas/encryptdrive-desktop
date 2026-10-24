@@ -48,7 +48,12 @@ impl DesktopApp {
             ui.add_space(Geometry::SPACE_3);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = Geometry::BASE;
-                ui.label(Icon::Lock.rich_text(palette.muted, TypeScale::HELPER));
+                crate::design::components::decorative_icon(
+                    ui,
+                    Icon::Lock,
+                    palette.muted,
+                    TypeScale::HELPER,
+                );
                 ui.label(
                     RichText::new("Unlock a vault to browse its files.")
                         .size(TypeScale::HELPER)

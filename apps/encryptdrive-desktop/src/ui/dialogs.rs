@@ -75,7 +75,7 @@ impl DesktopApp {
                             ui.add_space(Geometry::BASE);
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = Geometry::BASE + 2.0;
-                                ui.label(Icon::Error.rich_text(palette.danger, TypeScale::HELPER));
+                                crate::design::components::decorative_icon(ui, Icon::Error, palette.danger, TypeScale::HELPER);
                                 ui.label(
                                     RichText::new(error)
                                         .size(TypeScale::HELPER)
@@ -267,16 +267,12 @@ fn item_subject(preview: &super::app::PreviewState, selected: &[EntryId]) -> Str
             .model
             .entry(*id)
             .map_or_else(|| "1 item".to_owned(), |entry| format!("“{}”", entry.name)),
-        ids => format!("{} items", ids.len()),
+        ids => super::explorer::item_count(ids.len()),
     }
 }
 
 fn count_message(verb: &str, count: usize, suffix: &str) -> String {
-    let items = if count == 1 {
-        "1 item".to_owned()
-    } else {
-        format!("{count} items")
-    };
+    let items = super::explorer::item_count(count);
     if suffix.is_empty() {
         format!("{verb} {items}.")
     } else {
@@ -315,7 +311,12 @@ fn warning_bar(ui: &mut egui::Ui, text: &str, palette: Palette) {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = Geometry::SPACE_2;
-                ui.label(Icon::Warning.rich_text(palette.warning, Geometry::ICON_SIZE));
+                crate::design::components::decorative_icon(
+                    ui,
+                    Icon::Warning,
+                    palette.warning,
+                    Geometry::ICON_SIZE,
+                );
                 ui.add(
                     egui::Label::new(
                         RichText::new(text)

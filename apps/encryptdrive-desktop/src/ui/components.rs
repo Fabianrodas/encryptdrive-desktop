@@ -96,6 +96,18 @@ pub(crate) fn icon_button_width(ui: &egui::Ui) -> f32 {
     button_metrics(ui).0 + Geometry::BASE
 }
 
+/// Decorative icon: painted rather than added as a text label, so the private-use glyph
+/// never appears as text in the accessibility tree. Adjacent text carries the meaning.
+pub(crate) fn decorative_icon(ui: &mut egui::Ui, icon: Icon, color: Color32, size: f32) {
+    let galley = ui
+        .painter()
+        .layout_no_wrap(icon.glyph().to_string(), icon_font(size), color);
+    let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        ui.painter().galley(rect.min, galley, color);
+    }
+}
+
 /// Paints and senses a button. `label` is always the accessible name; with
 /// `icon_only` it is shown as a tooltip instead of being drawn.
 fn paint_button(
@@ -404,7 +416,13 @@ pub(crate) fn table_sort_header_button(
             );
         }
     }
-    response.widget_info(|| WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    // The sort state is otherwise only visible as a chevron, so it goes into the name.
+    let name = match sort_indicator {
+        Some(Icon::SortAscending) => format!("{label}, sorted ascending"),
+        Some(_) => format!("{label}, sorted descending"),
+        None => label.to_owned(),
+    };
+    response.widget_info(|| WidgetInfo::labeled(egui::Role::Button, enabled, &name));
     paint_focus_ring(ui, &response, palette);
     response
 }
@@ -959,7 +977,7 @@ pub(crate) fn app_header(
                             .color(palette.muted),
                     )
                     .on_hover_text("EncryptDrive works locally; nothing is sent over the network.");
-                    ui.label(Icon::ShieldCheck.rich_text(palette.success, Geometry::ICON_SIZE));
+                    decorative_icon(ui, Icon::ShieldCheck, palette.success, Geometry::ICON_SIZE);
                 });
             });
         });
@@ -978,7 +996,7 @@ pub(crate) fn status_chip(ui: &mut egui::Ui, icon: Icon, text: &str, palette: Pa
             // `horizontal` would otherwise grow to the 32 px interact height.
             ui.spacing_mut().interact_size.y = Geometry::CHIP_HEIGHT - 2.0;
             ui.horizontal(|ui| {
-                ui.label(icon.rich_text(palette.icon, TypeScale::HELPER));
+                decorative_icon(ui, icon, palette.icon, TypeScale::HELPER);
                 ui.label(
                     RichText::new(text)
                         .size(TypeScale::HELPER)
@@ -1022,7 +1040,7 @@ pub(crate) fn empty_state(
     ui.allocate_ui_with_layout(available, Layout::top_down(Align::Center), |ui| {
         ui.set_min_size(available);
         ui.add_space(((available.y - block_height) / 2.0 - Geometry::SPACE_6).max(0.0));
-        ui.label(icon.rich_text(palette.muted, Geometry::HERO_ICON_SIZE));
+        decorative_icon(ui, icon, palette.muted, Geometry::HERO_ICON_SIZE);
         ui.add_space(Geometry::SPACE_3);
         ui.label(
             RichText::new(title)

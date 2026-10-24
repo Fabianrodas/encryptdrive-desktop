@@ -12,7 +12,7 @@ use super::app::{DesktopApp, DialogKind, fmt_size};
 use crate::design::{
     components::{
         ButtonKind, breadcrumb_button, button_activated, command_button, command_button_width,
-        command_menu_item, icon_button_width, menu_item, paint_focus_ring_rect,
+        command_menu_item, decorative_icon, icon_button_width, menu_item, paint_focus_ring_rect,
         paint_selection_pill, search_field, secondary_button, subtle_icon_button,
         table_sort_header_button,
     },
@@ -135,7 +135,7 @@ impl DesktopApp {
                 }
                 let last = breadcrumbs.len().saturating_sub(1);
                 for (index, (id, name)) in breadcrumbs.iter().enumerate() {
-                    ui.label(Icon::ChevronRight.rich_text(palette.muted, TypeScale::HELPER));
+                    decorative_icon(ui, Icon::ChevronRight, palette.muted, TypeScale::HELPER);
                     let crumb = breadcrumb_button(ui, name, index == last, palette);
                     if button_activated(ui, &crumb) && index != last {
                         preview.explorer.navigate_to(Some(*id));
@@ -405,13 +405,13 @@ impl DesktopApp {
                 Sense::hover()
             },
         );
-        table_focus_response.widget_info(|| {
-            WidgetInfo::labeled(
-                egui::Role::List,
-                table_enabled,
-                if is_trash { "Trash items" } else { "Files" },
-            )
-        });
+        let list_name = format!(
+            "{}, {}",
+            if is_trash { "Trash items" } else { "Files" },
+            item_count(ids.len())
+        );
+        table_focus_response
+            .widget_info(|| WidgetInfo::labeled(egui::Role::List, table_enabled, &list_name));
         if table_focus_response.has_focus() {
             context.memory_mut(|memory| {
                 memory.set_focus_lock_filter(table_focus_response.id, table_focus_event_filter());
@@ -506,16 +506,15 @@ impl DesktopApp {
                                 } else {
                                     Icon::File
                                 };
-                                ui.add(
-                                    egui::Label::new(icon.rich_text(
-                                        if kind == EntryKind::Folder {
-                                            palette.accent
-                                        } else {
-                                            palette.icon
-                                        },
-                                        Geometry::ICON_SIZE,
-                                    ))
-                                    .selectable(false),
+                                decorative_icon(
+                                    ui,
+                                    icon,
+                                    if kind == EntryKind::Folder {
+                                        palette.accent
+                                    } else {
+                                        palette.icon
+                                    },
+                                    Geometry::ICON_SIZE,
                                 );
                                 table_text_label(
                                     ui,
@@ -572,14 +571,7 @@ impl DesktopApp {
                                 egui::Role::ListItem,
                                 true,
                                 selected,
-                                format!(
-                                    "{entry_name}, {}",
-                                    if kind == EntryKind::Folder {
-                                        "folder"
-                                    } else {
-                                        "file"
-                                    }
-                                ),
+                                row_accessible_name(&entry_name, &type_text, &size_text, &modified),
                             )
                         });
                         if preview.explorer.focused_id() == Some(id) && table_has_focus {
@@ -795,11 +787,7 @@ impl DesktopApp {
         }
         let total = preview.explorer.visible_ids(&preview.model).len();
         let selected = preview.explorer.selected_ids().len();
-        let items = if total == 1 {
-            "1 item".to_owned()
-        } else {
-            format!("{} items", group_thousands(total))
-        };
+        let items = item_count(total);
         Some(if selected > 0 {
             format!("{items}  ·  {} selected", group_thousands(selected))
         } else {
@@ -835,7 +823,7 @@ impl DesktopApp {
         } else {
             accent
         };
-        ui.label(icon.rich_text(icon_color, Geometry::ICON_SIZE));
+        decorative_icon(ui, icon, icon_color, Geometry::ICON_SIZE);
         let max_width =
             (ui.available_width() - Geometry::COMPACT_CONTROL_HEIGHT - Geometry::SPACE_3).max(80.0);
         let label = left_aligned_label(
@@ -1150,6 +1138,35 @@ fn restored_message(count: usize) -> String {
     } else {
         format!("Restored {count} items to Files.")
     }
+}
+
+/// "1 item" / "10,000 items": the one count wording for the status bar, list and dialogs.
+pub(super) fn item_count(count: usize) -> String {
+    if count == 1 {
+        "1 item".to_owned()
+    } else {
+        format!("{} items", group_thousands(count))
+    }
+}
+
+/// Row name for assistive technology: the same context a sighted user reads across the
+/// columns, e.g. "Annual report.txt, Text document, 73 KB, modified 2024-02-13 16:40".
+pub(super) fn row_accessible_name(
+    name: &str,
+    type_text: &str,
+    size: &str,
+    modified: &str,
+) -> String {
+    let mut parts = vec![name, type_text];
+    if !size.is_empty() {
+        parts.push(size);
+    }
+    let mut text = parts.join(", ");
+    if !modified.is_empty() {
+        text.push_str(", modified ");
+        text.push_str(modified);
+    }
+    text
 }
 
 pub(super) fn group_thousands(value: usize) -> String {
@@ -1827,6 +1844,26 @@ mod tests {
         let (inline, search) = command_layout(120.0, &widths, more);
         assert_eq!(inline, 0);
         assert_eq!(search, 160.0);
+    }
+
+    #[test]
+    fn rows_and_counts_have_complete_accessible_wording() {
+        use super::{item_count, row_accessible_name};
+        assert_eq!(
+            row_accessible_name(
+                "Annual report.txt",
+                "Text document",
+                "73 KB",
+                "2024-02-13 16:40"
+            ),
+            "Annual report.txt, Text document, 73 KB, modified 2024-02-13 16:40"
+        );
+        assert_eq!(
+            row_accessible_name("Documents", "File folder", "", "2024-02-10 13:19"),
+            "Documents, File folder, modified 2024-02-10 13:19"
+        );
+        assert_eq!(item_count(1), "1 item");
+        assert_eq!(item_count(10_000), "10,000 items");
     }
 
     #[test]

@@ -98,6 +98,8 @@ impl Icon {
         .expect("all named Phosphor codepoints are valid Unicode scalars")
     }
 
+    /// Only for icon atoms inside widgets that set their own accessible name.
+    #[cfg_attr(not(feature = "design-preview"), allow(dead_code))]
     pub(crate) fn rich_text(self, color: egui::Color32, size: f32) -> RichText {
         RichText::new(self.glyph())
             .font(FontId::new(

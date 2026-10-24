@@ -1246,13 +1246,76 @@ mod tests {
     }
 
     #[test]
+    fn accessibility_tree_has_sort_state_counts_overflow_and_no_icon_glyphs() {
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut app = super::DesktopApp::new(true);
+        let mut frame = eframe::Frame::_new_kittest();
+        let mut texts = Vec::new();
+        for time in [0.0, 0.02] {
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    // The minimum window size, where the command bar overflows.
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(880.0, 600.0),
+                    )),
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ui| <super::DesktopApp as eframe::App>::ui(&mut app, ui, &mut frame),
+            );
+            output.textures_delta.clear();
+            texts = output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .map(|update| {
+                    update
+                        .nodes
+                        .iter()
+                        .flat_map(|(_, node)| [node.label(), node.value()])
+                        .flatten()
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+        let private_use =
+            |text: &String| text.chars().any(|c| ('\u{E000}'..='\u{F8FF}').contains(&c));
+        assert!(
+            !texts.iter().any(private_use),
+            "icon glyphs leaked: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|text| text == "Name, sorted ascending"),
+            "{texts:?}"
+        );
+        assert!(texts.iter().any(|text| text == "Type"), "{texts:?}");
+        assert!(
+            texts
+                .iter()
+                .any(|text| text.starts_with("Files, ") && text.ends_with(" items")),
+            "{texts:?}"
+        );
+        assert!(
+            texts.iter().any(|text| text == "More commands"),
+            "{texts:?}"
+        );
+        assert!(texts.iter().any(|text| text == "New folder"), "{texts:?}");
+    }
+
+    #[test]
     fn synthetic_full_app_row_click_updates_selection_toolbar_and_keyboard_focus() {
         let context = egui::Context::default();
         context.enable_accesskit();
         let mut app = super::DesktopApp::new(true);
         let (_, output) = render_complete_app_frame(&mut app, &context, Vec::new(), 0.0);
-        let row = accessible_center_containing(&output, "Annual report.txt, file")
-            .expect("the accessible file list exposes the synthetic first file row");
+        let row = accessible_center_containing(
+            &output,
+            "Annual report.txt, Text document, 73 KB, modified",
+        )
+        .expect("the accessible file list exposes the synthetic first file row");
         // The command bar is stable: Rename is always present, but disabled until exactly
         // one item is selected (so selecting never shifts the table).
         assert_eq!(accessible_disabled(&output, "Rename"), Some(true));
