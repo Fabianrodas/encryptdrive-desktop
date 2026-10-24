@@ -759,6 +759,7 @@ impl DesktopApp {
     /// Explorer-style status bar: item summary, then the current message or operation,
     /// with the preview controls on the right.
     pub(super) fn render_status_bar(&mut self, ui: &mut egui::Ui, palette: Palette) {
+        crate::design::components::use_compact_density(ui);
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = Geometry::SPACE_2;
             if let Some(summary) = self.status_summary() {
@@ -845,7 +846,7 @@ impl DesktopApp {
         };
         ui.label(icon.rich_text(icon_color, Geometry::ICON_SIZE));
         let max_width =
-            (ui.available_width() - Geometry::ICON_BUTTON_WIDTH - Geometry::SPACE_2).max(80.0);
+            (ui.available_width() - Geometry::COMPACT_CONTROL_HEIGHT - Geometry::SPACE_3).max(80.0);
         let label = left_aligned_label(
             ui,
             max_width.min(560.0),

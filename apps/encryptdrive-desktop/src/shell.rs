@@ -85,6 +85,7 @@ impl eframe::App for DesktopShell {
         }
 
         components::status_bar_panel(palette).show(ui, |ui| {
+            components::use_compact_density(ui);
             ui.horizontal_centered(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(

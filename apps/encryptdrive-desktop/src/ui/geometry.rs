@@ -15,12 +15,14 @@ impl Geometry {
     pub(crate) const SPACE_8: f32 = 32.0;
     pub(crate) const BRAND_MARK_SIZE: f32 = 28.0;
     pub(crate) const HEADER_HEIGHT: f32 = 48.0;
-    pub(crate) const STATUS_BAR_HEIGHT: f32 = 40.0;
+    pub(crate) const STATUS_BAR_HEIGHT: f32 = 36.0;
     pub(crate) const SIDEBAR_WIDTH: f32 = 220.0;
     /// Below this content width command buttons collapse to icon-only buttons.
     pub(crate) const COMPACT_COMMAND_WIDTH: f32 = 820.0;
     pub(crate) const CONTROL_HEIGHT: f32 = 32.0;
-    pub(crate) const ICON_BUTTON_WIDTH: f32 = 36.0;
+    /// Secondary chrome (status bar): Fluent compact sizing.
+    pub(crate) const COMPACT_CONTROL_HEIGHT: f32 = 28.0;
+    pub(crate) const CHIP_HEIGHT: f32 = 24.0;
     pub(crate) const SEARCH_WIDTH: f32 = 260.0;
     pub(crate) const NAVIGATION_ROW_HEIGHT: f32 = 36.0;
     pub(crate) const NAV_ICON_CENTER: f32 = 24.0;
@@ -51,7 +53,8 @@ mod tests {
             Geometry::SPACE_6,
             Geometry::SPACE_8,
             Geometry::CONTROL_HEIGHT,
-            Geometry::ICON_BUTTON_WIDTH,
+            Geometry::COMPACT_CONTROL_HEIGHT,
+            Geometry::CHIP_HEIGHT,
             Geometry::NAVIGATION_ROW_HEIGHT,
             Geometry::TABLE_ROW_HEIGHT,
             Geometry::TABLE_HEADER_HEIGHT,

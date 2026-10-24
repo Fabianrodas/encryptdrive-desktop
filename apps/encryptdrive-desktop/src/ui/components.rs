@@ -80,13 +80,25 @@ fn paint_button(
     let content_width = icon_galley.as_ref().map_or(0.0, |g| g.size().x)
         + gap
         + label_galley.as_ref().map_or(0.0, |g| g.size().x);
-    let width = if icon_only {
-        Geometry::ICON_BUTTON_WIDTH
+    // Height follows the surrounding density (standard 32 px, compact 28 px in the status
+    // bar) via `interact_size`, so one painter serves every context.
+    let height = ui
+        .spacing()
+        .interact_size
+        .y
+        .max(Geometry::COMPACT_CONTROL_HEIGHT);
+    let padding = if height < Geometry::CONTROL_HEIGHT {
+        Geometry::SPACE_2
     } else {
-        (content_width + Geometry::SPACE_3 * 2.0).max(min_width)
+        Geometry::SPACE_3
+    };
+    let width = if icon_only {
+        height + Geometry::BASE
+    } else {
+        (content_width + padding * 2.0).max(min_width)
     };
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(width, Geometry::CONTROL_HEIGHT),
+        egui::vec2(width, height),
         Sense::click().union(Sense::focusable_noninteractive()),
     );
 
@@ -804,10 +816,12 @@ pub(crate) fn status_chip(ui: &mut egui::Ui, icon: Icon, text: &str, palette: Pa
     Frame::new()
         .fill(palette.surface_alt)
         .stroke(Stroke::new(1.0, palette.separator))
-        .corner_radius(CornerRadius::same(12))
-        .inner_margin(Margin::symmetric(Geometry::SPACE_2 as i8, 3))
+        .corner_radius(CornerRadius::same((Geometry::CHIP_HEIGHT / 2.0) as u8))
+        .inner_margin(Margin::symmetric(Geometry::SPACE_3 as i8 - 2, 0))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = Geometry::BASE + 2.0;
+            // `horizontal` would otherwise grow to the 32 px interact height.
+            ui.spacing_mut().interact_size.y = Geometry::CHIP_HEIGHT - 2.0;
             ui.horizontal(|ui| {
                 ui.label(icon.rich_text(palette.icon, TypeScale::HELPER));
                 ui.label(
@@ -830,6 +844,14 @@ pub(crate) fn status_bar_panel(palette: Palette) -> egui::Panel {
             top: 0,
             bottom: 0,
         }))
+}
+
+/// Fluent compact sizing for secondary chrome such as the status bar: 28 px controls with
+/// tighter padding. Text keeps the semantic type roles.
+pub(crate) fn use_compact_density(ui: &mut egui::Ui) {
+    let spacing = ui.spacing_mut();
+    spacing.interact_size.y = Geometry::COMPACT_CONTROL_HEIGHT;
+    spacing.button_padding = egui::vec2(Geometry::SPACE_2, Geometry::BASE / 2.0);
 }
 
 /// Centred empty state: hero icon, Body Large Strong title, Body description.
