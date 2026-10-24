@@ -66,7 +66,7 @@ impl Default for DesktopShell {
 impl eframe::App for DesktopShell {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        components::fit_window_to_monitor(&ctx, &mut self.window_fitted);
+        crate::design::work_area::fit_window_to_monitor(&ctx, &mut self.window_fitted);
         self.apply_theme(&ctx);
         let palette = self.palette();
 

@@ -455,7 +455,7 @@ impl DesktopApp {
 impl eframe::App for DesktopApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        components::fit_window_to_monitor(&ctx, &mut self.window_fitted);
+        crate::design::work_area::fit_window_to_monitor(&ctx, &mut self.window_fitted);
         self.apply_theme(&ctx);
         self.handle_global_keys(&ctx);
         let palette = self.palette();

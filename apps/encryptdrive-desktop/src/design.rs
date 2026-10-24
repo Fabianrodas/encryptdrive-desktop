@@ -12,3 +12,5 @@ pub(crate) mod icons;
 pub(crate) mod theme;
 #[path = "ui/typography.rs"]
 pub(crate) mod typography;
+#[path = "ui/work_area.rs"]
+pub(crate) mod work_area;

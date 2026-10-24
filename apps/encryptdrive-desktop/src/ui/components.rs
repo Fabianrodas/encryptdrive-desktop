@@ -1203,32 +1203,6 @@ pub(crate) fn settings_dialog(
     keep_open && !modal.should_close()
 }
 
-/// Shrinks and centres the window once if its default size does not fit the monitor
-/// work area (e.g. 1080p at 125 % or 150 % scaling). Call every frame; it acts once.
-pub(crate) fn fit_window_to_monitor(ctx: &egui::Context, done: &mut bool) {
-    if *done {
-        return;
-    }
-    let (monitor, inner) =
-        ctx.input(|input| (input.viewport().monitor_size, input.viewport().inner_rect));
-    let (Some(monitor), Some(inner)) = (monitor, inner) else {
-        return;
-    };
-    *done = true;
-    // Leave room for the title bar and the taskbar.
-    let available = egui::vec2(monitor.x - 32.0, monitor.y - 120.0);
-    let size = inner.size();
-    if size.x <= available.x && size.y <= available.y {
-        return;
-    }
-    let fitted = egui::vec2(size.x.min(available.x), size.y.min(available.y));
-    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(fitted));
-    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
-        ((monitor.x - fitted.x) / 2.0).max(0.0),
-        ((monitor.y - fitted.y - 80.0) / 2.0).max(0.0),
-    )));
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
