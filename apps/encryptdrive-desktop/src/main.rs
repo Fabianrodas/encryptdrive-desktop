@@ -14,6 +14,19 @@ fn settings_argument() -> bool {
     std::env::args().any(|arg| arg == "--open-settings")
 }
 
+/// `--window-size=WxH` requests an initial inner size in logical points (useful for
+/// responsive reviews). The window is still fitted to the monitor work area at runtime.
+fn window_size_argument() -> Option<[f32; 2]> {
+    std::env::args().find_map(|arg| parse_window_size(arg.strip_prefix("--window-size=")?))
+}
+
+fn parse_window_size(value: &str) -> Option<[f32; 2]> {
+    let (width, height) = value.split_once(['x', 'X'])?;
+    let width: f32 = width.trim().parse().ok()?;
+    let height: f32 = height.trim().parse().ok()?;
+    (width >= 640.0 && height >= 480.0).then_some([width, height])
+}
+
 /// `--theme=light|dark|system` starts with an explicit appearance (useful for reviews).
 fn appearance_argument() -> AppearancePreference {
     std::env::args()
@@ -78,11 +91,24 @@ fn run_native(title: &'static str, app: eframe::AppCreator<'_>) -> eframe::Resul
         renderer: eframe::Renderer::Wgpu,
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title(title)
-            .with_inner_size([1200.0, 760.0])
+            .with_inner_size(window_size_argument().unwrap_or([1200.0, 760.0]))
             .with_min_inner_size([880.0, 600.0])
             .with_icon(Arc::new(window_icon)),
         centered: true,
         ..Default::default()
     };
     eframe::run_native(title, options, app)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_window_size;
+
+    #[test]
+    fn window_size_argument_accepts_only_sane_logical_sizes() {
+        assert_eq!(parse_window_size("960x640"), Some([960.0, 640.0]));
+        assert_eq!(parse_window_size("1600X900"), Some([1600.0, 900.0]));
+        assert_eq!(parse_window_size("100x100"), None);
+        assert_eq!(parse_window_size("wide"), None);
+    }
 }

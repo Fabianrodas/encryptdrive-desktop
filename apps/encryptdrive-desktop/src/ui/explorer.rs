@@ -43,7 +43,7 @@ impl DesktopApp {
                 });
         self.render_page_heading(ui, palette, destination, folder);
         ui.add_space(Geometry::SPACE_2);
-        let compact = ui.available_width() < Geometry::COMPACT_COMMAND_WIDTH;
+        let density = command_density(ui.available_width());
         let search_has_focus = self.render_command_bar(
             ui,
             palette,
@@ -51,7 +51,7 @@ impl DesktopApp {
             selected_count,
             actions_enabled,
             busy,
-            compact,
+            density,
         );
         ui.add_space(Geometry::SPACE_3);
 
@@ -158,10 +158,13 @@ impl DesktopApp {
         selected_count: usize,
         actions_enabled: bool,
         busy: bool,
-        compact: bool,
+        density: CommandDensity,
     ) -> bool {
         let mut search_has_focus = false;
         let width = ui.available_width();
+        // Secondary commands drop their labels first; the primary keeps its label longest.
+        let compact = density != CommandDensity::Labels;
+        let primary_compact = density == CommandDensity::IconsOnly;
         ui.allocate_ui_with_layout(
             egui::vec2(width, Geometry::CONTROL_HEIGHT),
             Layout::left_to_right(Align::Center),
@@ -180,7 +183,7 @@ impl DesktopApp {
                                 Icon::NewFolder,
                                 "New folder",
                                 ButtonKind::Primary,
-                                compact,
+                                primary_compact,
                                 palette,
                             )
                         })
@@ -272,7 +275,8 @@ impl DesktopApp {
                                 Icon::Restore,
                                 "Restore",
                                 ButtonKind::Subtle,
-                                compact,
+                                // Trash has only two commands, so they keep labels longer.
+                                primary_compact,
                                 palette,
                             )
                         })
@@ -290,7 +294,8 @@ impl DesktopApp {
                                 Icon::Trash,
                                 "Delete permanently",
                                 ButtonKind::SubtleDanger,
-                                compact,
+                                // Trash has only two commands, so they keep labels longer.
+                                primary_compact,
                                 palette,
                             )
                         })
@@ -302,11 +307,7 @@ impl DesktopApp {
                 }
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let search_width = if compact {
-                        Geometry::SEARCH_WIDTH - Geometry::SPACE_8 * 2.0
-                    } else {
-                        Geometry::SEARCH_WIDTH
-                    };
+                    let search_width = search_width(width, density);
                     let hint = if destination == Destination::Trash {
                         "Search Trash"
                     } else {
@@ -961,6 +962,38 @@ fn left_aligned_label(ui: &mut egui::Ui, width: f32, text: RichText) -> egui::Re
         |ui| ui.add(egui::Label::new(text).truncate().selectable(false)),
     )
     .inner
+}
+
+/// How much text the command bar can afford at a given content width.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum CommandDensity {
+    /// Every command shows icon and label.
+    Labels,
+    /// Only the primary command keeps its label; the rest are icon buttons with tooltips.
+    PrimaryLabel,
+    /// Every command is an icon button with a tooltip.
+    IconsOnly,
+}
+
+pub(super) fn command_density(content_width: f32) -> CommandDensity {
+    if content_width >= Geometry::COMMAND_LABELS_MIN_WIDTH {
+        CommandDensity::Labels
+    } else if content_width >= Geometry::COMMAND_PRIMARY_LABEL_MIN_WIDTH {
+        CommandDensity::PrimaryLabel
+    } else {
+        CommandDensity::IconsOnly
+    }
+}
+
+/// Search grows with spare width up to 320 px and never squeezes the commands.
+pub(super) fn search_width(content_width: f32, density: CommandDensity) -> f32 {
+    let reserved_for_commands = match density {
+        CommandDensity::Labels => 640.0,
+        CommandDensity::PrimaryLabel => 400.0,
+        CommandDensity::IconsOnly => 260.0,
+    };
+    (content_width - reserved_for_commands)
+        .clamp(Geometry::SEARCH_MIN_WIDTH, Geometry::SEARCH_MAX_WIDTH)
 }
 
 fn command_separator(ui: &mut egui::Ui, palette: Palette) {
@@ -1677,6 +1710,19 @@ mod tests {
             .top();
 
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn command_bar_collapses_progressively_and_search_stays_within_bounds() {
+        use super::{CommandDensity, command_density, search_width};
+        assert_eq!(command_density(1200.0), CommandDensity::Labels);
+        assert_eq!(command_density(720.0), CommandDensity::PrimaryLabel);
+        assert_eq!(command_density(560.0), CommandDensity::IconsOnly);
+        for width in [400.0, 560.0, 720.0, 904.0, 1300.0, 1800.0] {
+            let search = search_width(width, command_density(width));
+            assert!((160.0..=320.0).contains(&search), "{width} -> {search}");
+        }
+        assert_eq!(search_width(1800.0, CommandDensity::Labels), 320.0);
     }
 
     #[test]

@@ -789,11 +789,21 @@ pub(crate) struct WorkspaceNavigationResult {
     pub(crate) trash_id: Option<egui::Id>,
 }
 
-/// Fixed-width navigation pane shared by the shell and the preview.
-pub(crate) fn sidebar_panel(palette: Palette) -> egui::Panel {
+/// Sidebar width for a window width: full above the breakpoint, narrower below it so
+/// small windows (960 px and the 880 px minimum) keep a usable file list.
+pub(crate) fn sidebar_width(window_width: f32) -> f32 {
+    if window_width >= Geometry::SIDEBAR_BREAKPOINT {
+        Geometry::SIDEBAR_WIDTH
+    } else {
+        Geometry::SIDEBAR_WIDTH_NARROW
+    }
+}
+
+/// Navigation pane shared by the shell and the preview.
+pub(crate) fn sidebar_panel(palette: Palette, window_width: f32) -> egui::Panel {
     egui::Panel::left("encryptdrive-shared-sidebar")
         .resizable(false)
-        .exact_size(Geometry::SIDEBAR_WIDTH)
+        .exact_size(sidebar_width(window_width))
         .show_separator_line(false)
         .frame(Frame::new().fill(palette.canvas).inner_margin(Margin {
             left: Geometry::SPACE_2 as i8,
@@ -1144,6 +1154,15 @@ mod tests {
     };
     use crate::design::theme::Palette;
     use eframe::egui;
+
+    #[test]
+    fn sidebar_narrows_below_the_breakpoint_and_never_hides() {
+        use super::sidebar_width;
+        assert_eq!(sidebar_width(1920.0), 220.0);
+        assert_eq!(sidebar_width(1100.0), 220.0);
+        assert_eq!(sidebar_width(960.0), 184.0);
+        assert_eq!(sidebar_width(880.0), 184.0);
+    }
 
     #[test]
     fn keyboard_activation_requires_focus_on_the_button() {

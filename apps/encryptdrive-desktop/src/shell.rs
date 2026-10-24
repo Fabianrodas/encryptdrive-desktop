@@ -97,7 +97,7 @@ impl eframe::App for DesktopShell {
             });
         });
 
-        components::sidebar_panel(palette).show(ui, |ui| {
+        components::sidebar_panel(palette, ui.max_rect().width()).show(ui, |ui| {
             if let Some(destination) =
                 workspace_navigation(ui, self.state.destination, true, palette).chosen
             {

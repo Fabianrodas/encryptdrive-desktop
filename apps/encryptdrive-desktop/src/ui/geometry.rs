@@ -17,13 +17,19 @@ impl Geometry {
     pub(crate) const HEADER_HEIGHT: f32 = 48.0;
     pub(crate) const STATUS_BAR_HEIGHT: f32 = 36.0;
     pub(crate) const SIDEBAR_WIDTH: f32 = 220.0;
-    /// Below this content width command buttons collapse to icon-only buttons.
-    pub(crate) const COMPACT_COMMAND_WIDTH: f32 = 820.0;
+    /// Narrow windows trade sidebar width for content (still fits "Files" / "Trash").
+    pub(crate) const SIDEBAR_WIDTH_NARROW: f32 = 184.0;
+    /// Window width (logical points) at which the sidebar uses its full width.
+    pub(crate) const SIDEBAR_BREAKPOINT: f32 = 1100.0;
+    /// Content widths at which the command bar keeps every label / only the primary label.
+    pub(crate) const COMMAND_LABELS_MIN_WIDTH: f32 = 840.0;
+    pub(crate) const COMMAND_PRIMARY_LABEL_MIN_WIDTH: f32 = 600.0;
     pub(crate) const CONTROL_HEIGHT: f32 = 32.0;
     /// Secondary chrome (status bar): Fluent compact sizing.
     pub(crate) const COMPACT_CONTROL_HEIGHT: f32 = 28.0;
     pub(crate) const CHIP_HEIGHT: f32 = 24.0;
-    pub(crate) const SEARCH_WIDTH: f32 = 260.0;
+    pub(crate) const SEARCH_MIN_WIDTH: f32 = 160.0;
+    pub(crate) const SEARCH_MAX_WIDTH: f32 = 320.0;
     pub(crate) const NAVIGATION_ROW_HEIGHT: f32 = 36.0;
     pub(crate) const NAV_ICON_CENTER: f32 = 24.0;
     pub(crate) const NAV_LABEL_INSET: f32 = 44.0;
@@ -61,6 +67,9 @@ mod tests {
             Geometry::HEADER_HEIGHT,
             Geometry::STATUS_BAR_HEIGHT,
             Geometry::SIDEBAR_WIDTH,
+            Geometry::SIDEBAR_WIDTH_NARROW,
+            Geometry::SEARCH_MIN_WIDTH,
+            Geometry::SEARCH_MAX_WIDTH,
             Geometry::DIALOG_WIDTH,
         ] {
             assert_eq!(value % Geometry::BASE, 0.0);

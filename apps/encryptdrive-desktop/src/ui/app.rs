@@ -461,7 +461,9 @@ impl eframe::App for DesktopApp {
         let palette = self.palette();
         self.render_header(ui, palette);
         components::status_bar_panel(palette).show(ui, |ui| self.render_status_bar(ui, palette));
-        components::sidebar_panel(palette).show(ui, |ui| self.render_navigation(ui, palette));
+        let window_width = ui.max_rect().width();
+        components::sidebar_panel(palette, window_width)
+            .show(ui, |ui| self.render_navigation(ui, palette));
 
         egui::CentralPanel::default()
             .frame(components::central_canvas_frame(palette))
