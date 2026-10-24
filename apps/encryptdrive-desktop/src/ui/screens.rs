@@ -6,7 +6,7 @@ use super::app::DesktopApp;
 use crate::design::{
     components::{
         ButtonKind, button_activated, dialog_button, labeled_text_field, paint_focus_ring,
-        paint_selection_pill,
+        paint_selection_pill, styled_combo,
     },
     geometry::Geometry,
     icons::Icon,
@@ -71,16 +71,18 @@ impl DesktopApp {
                             PreviewScenario::UnlockVault => {
                                 header(ui, Icon::Unlock, "Unlock vault", "Enter the vault password to access its files.", palette);
                                 let vault_label = ui.label(RichText::new("Vault").size(TypeScale::BODY).color(palette.text));
-                                egui::ComboBox::from_id_salt("synthetic-vault-choice")
-                                    .selected_text(preview.sample_vault.as_str())
-                                    .width(content_width)
-                                    .show_ui(ui, |ui| {
-                                        for vault in ["Personal sample vault", "Archive sample vault"] {
-                                            ui.selectable_value(&mut preview.sample_vault, vault.to_owned(), vault);
-                                        }
-                                    })
-                                    .response
-                                    .labelled_by(vault_label.id);
+                                styled_combo(ui, palette, |ui| {
+                                    egui::ComboBox::from_id_salt("synthetic-vault-choice")
+                                        .selected_text(preview.sample_vault.as_str())
+                                        .width(content_width)
+                                        .show_ui(ui, |ui| {
+                                            for vault in ["Personal sample vault", "Archive sample vault"] {
+                                                ui.selectable_value(&mut preview.sample_vault, vault.to_owned(), vault);
+                                            }
+                                        })
+                                        .response
+                                })
+                                .labelled_by(vault_label.id);
                                 ui.add_space(Geometry::SPACE_3);
                                 labeled_text_field(ui, "Password", &mut preview.form_secret, "Vault password", true, palette);
                                 ui.add_space(Geometry::SPACE_6);

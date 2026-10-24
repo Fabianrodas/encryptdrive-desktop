@@ -36,6 +36,8 @@ pub(crate) enum ButtonKind {
     Subtle,
     /// Neutral button whose label uses the danger colour.
     Destructive,
+    /// Command-bar variant of `Destructive`: transparent at rest, danger label.
+    SubtleDanger,
 }
 
 /// Paints and senses a button. `label` is always the accessible name; with
@@ -53,7 +55,9 @@ fn paint_button(
     let (foreground, icon_color) = match (enabled, kind) {
         (false, _) => (palette.disabled_text(), palette.disabled_text()),
         (true, ButtonKind::Primary) => (palette.on_action, palette.on_action),
-        (true, ButtonKind::Destructive) => (palette.danger, palette.danger),
+        (true, ButtonKind::Destructive | ButtonKind::SubtleDanger) => {
+            (palette.danger, palette.danger)
+        }
         (true, _) => (palette.text, palette.icon),
     };
     let icon_galley = icon.map(|icon| {
@@ -121,6 +125,16 @@ fn paint_button(
                     palette.surface_alt
                 } else if hovered {
                     palette.hover
+                } else {
+                    Color32::TRANSPARENT
+                },
+                Color32::TRANSPARENT,
+            ),
+            ButtonKind::SubtleDanger => (
+                if pressed {
+                    super::theme::mix(palette.surface, palette.danger, 0.14)
+                } else if hovered {
+                    super::theme::mix(palette.surface, palette.danger, 0.08)
                 } else {
                     Color32::TRANSPARENT
                 },
@@ -441,26 +455,69 @@ pub(crate) fn paint_focus_ring_rect(ui: &egui::Ui, rect: Rect, palette: Palette)
     );
 }
 
-/// Fluent text-box focus: an accent underline in addition to the frame.
+/// Fluent text-box frame: subtle outline on all sides; the emphasis lives on the bottom
+/// edge (1 px 3:1 outline at rest, 2 px accent while focused), matching WinUI TextBox.
 #[cfg(feature = "design-preview")]
-fn paint_input_focus(ui: &egui::Ui, response: &egui::Response, palette: Palette) {
-    if response.has_focus() && ui.is_rect_visible(response.rect) {
-        let rect = response.rect;
-        ui.painter().rect_filled(
-            Rect::from_min_max(
-                egui::pos2(rect.left() + 1.0, rect.bottom() - 2.0),
-                egui::pos2(rect.right() - 1.0, rect.bottom()),
-            ),
-            CornerRadius {
-                nw: 0,
-                ne: 0,
-                sw: Geometry::CONTROL_RADIUS,
-                se: Geometry::CONTROL_RADIUS,
-            },
-            palette.accent,
-        );
-        paint_focus_ring(ui, response, palette);
+fn input_frame(ui: &egui::Ui, palette: Palette, margin: Margin) -> Frame {
+    Frame::new()
+        .fill(if ui.is_enabled() {
+            palette.surface
+        } else {
+            palette.surface_alt
+        })
+        .stroke(Stroke::new(1.0, palette.control_stroke()))
+        .corner_radius(control_radius())
+        .inner_margin(margin)
+}
+
+/// Paints the emphasised bottom edge of an input-like control (text box, combo box).
+#[cfg(feature = "design-preview")]
+pub(crate) fn paint_input_bottom(ui: &egui::Ui, rect: Rect, focused: bool, palette: Palette) {
+    if !ui.is_rect_visible(rect) {
+        return;
     }
+    let (thickness, color) = if focused {
+        (2.0, palette.accent)
+    } else {
+        (1.0, palette.border)
+    };
+    let radius = f32::from(Geometry::CONTROL_RADIUS);
+    ui.painter().rect_filled(
+        Rect::from_min_max(
+            egui::pos2(rect.left() + radius / 2.0, rect.bottom() - thickness),
+            egui::pos2(rect.right() - radius / 2.0, rect.bottom()),
+        ),
+        CornerRadius::same(1),
+        color,
+    );
+}
+
+/// Runs a ComboBox with the same Fluent input styling as text boxes.
+#[cfg(feature = "design-preview")]
+pub(crate) fn styled_combo(
+    ui: &mut egui::Ui,
+    palette: Palette,
+    add_combo: impl FnOnce(&mut egui::Ui) -> egui::Response,
+) -> egui::Response {
+    let response = ui
+        .scope(|ui| {
+            let visuals = &mut ui.visuals_mut().widgets;
+            for state in [
+                &mut visuals.inactive,
+                &mut visuals.hovered,
+                &mut visuals.open,
+            ] {
+                state.bg_stroke = Stroke::new(1.0, palette.control_stroke());
+            }
+            visuals.inactive.weak_bg_fill = palette.surface;
+            visuals.hovered.weak_bg_fill = palette.hover;
+            visuals.open.weak_bg_fill = palette.surface_alt;
+            add_combo(ui)
+        })
+        .inner;
+    paint_input_bottom(ui, response.rect, false, palette);
+    paint_focus_ring(ui, &response, palette);
+    response
 }
 
 #[cfg(feature = "design-preview")]
@@ -483,9 +540,10 @@ pub(crate) fn labeled_text_field(
         .hint_text(hint)
         .desired_width(width)
         .align(Align2::LEFT_CENTER)
-        .margin(Margin::symmetric(
-            Geometry::SPACE_3 as i8,
-            Geometry::BASE as i8,
+        .frame(input_frame(
+            ui,
+            palette,
+            Margin::symmetric(Geometry::SPACE_3 as i8, Geometry::BASE as i8),
         ));
     if password {
         text_edit = text_edit.password(true);
@@ -493,7 +551,7 @@ pub(crate) fn labeled_text_field(
     let response = ui
         .add_sized(egui::vec2(width, Geometry::CONTROL_HEIGHT), text_edit)
         .labelled_by(label_response.id);
-    paint_input_focus(ui, &response, palette);
+    paint_input_bottom(ui, response.rect, response.has_focus(), palette);
     response
 }
 
@@ -511,12 +569,16 @@ pub(crate) fn search_field(
         egui::TextEdit::singleline(value)
             .hint_text(hint)
             .align(Align2::LEFT_CENTER)
-            .margin(Margin {
-                left: (Geometry::SPACE_8) as i8,
-                right: Geometry::SPACE_2 as i8,
-                top: Geometry::BASE as i8,
-                bottom: Geometry::BASE as i8,
-            }),
+            .frame(input_frame(
+                ui,
+                palette,
+                Margin {
+                    left: (Geometry::SPACE_8) as i8,
+                    right: Geometry::SPACE_2 as i8,
+                    top: Geometry::BASE as i8,
+                    bottom: Geometry::BASE as i8,
+                },
+            )),
     );
     if ui.is_rect_visible(response.rect) {
         ui.painter().text(
@@ -530,7 +592,7 @@ pub(crate) fn search_field(
             palette.muted,
         );
     }
-    paint_input_focus(ui, &response, palette);
+    paint_input_bottom(ui, response.rect, response.has_focus(), palette);
     response.widget_info(|| {
         WidgetInfo::labeled(egui::Role::TextInput, ui.is_enabled(), "Search files")
     });

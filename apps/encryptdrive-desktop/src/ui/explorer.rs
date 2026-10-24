@@ -289,7 +289,7 @@ impl DesktopApp {
                                 ui,
                                 Icon::Trash,
                                 "Delete permanently",
-                                ButtonKind::Destructive,
+                                ButtonKind::SubtleDanger,
                                 compact,
                                 palette,
                             )

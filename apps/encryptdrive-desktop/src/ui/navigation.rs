@@ -8,7 +8,7 @@ use encryptdrive_desktop::{
 
 use super::app::DesktopApp;
 use crate::design::{
-    components::{empty_state, workspace_navigation},
+    components::{empty_state, styled_combo, workspace_navigation},
     theme::Palette,
 };
 
@@ -72,24 +72,27 @@ impl DesktopApp {
             DatasetSize::TenThousand => "10,000 items",
         };
         // Laid out right-to-left: list size, scenario, then the "Preview" caption.
-        let dataset_picker = egui::ComboBox::from_id_salt("preview-dataset-size")
-            .selected_text(RichText::new(selected_dataset).size(TypeScale::HELPER))
-            .width(104.0)
-            .show_ui(ui, |ui| {
-                for (size, label) in [
-                    (DatasetSize::OneHundred, "100 items"),
-                    (DatasetSize::OneThousand, "1,000 items"),
-                    (DatasetSize::TenThousand, "10,000 items"),
-                ] {
-                    if ui
-                        .selectable_label(preview.dataset_size == size, label)
-                        .clicked()
-                    {
-                        dataset_changed = Some(size);
+        let dataset_picker = styled_combo(ui, palette, |ui| {
+            egui::ComboBox::from_id_salt("preview-dataset-size")
+                .selected_text(RichText::new(selected_dataset).size(TypeScale::HELPER))
+                .width(104.0)
+                .show_ui(ui, |ui| {
+                    for (size, label) in [
+                        (DatasetSize::OneHundred, "100 items"),
+                        (DatasetSize::OneThousand, "1,000 items"),
+                        (DatasetSize::TenThousand, "10,000 items"),
+                    ] {
+                        if ui
+                            .selectable_label(preview.dataset_size == size, label)
+                            .clicked()
+                        {
+                            dataset_changed = Some(size);
+                        }
                     }
-                }
-            });
-        dataset_picker.response.widget_info(|| {
+                })
+                .response
+        });
+        dataset_picker.widget_info(|| {
             WidgetInfo::labeled(
                 egui::Role::ComboBox,
                 true,
@@ -97,20 +100,23 @@ impl DesktopApp {
             )
         });
         let selected_scenario = preview.scenario.label();
-        let scenario_picker = egui::ComboBox::from_id_salt("preview-scenario-picker")
-            .selected_text(RichText::new(selected_scenario).size(TypeScale::HELPER))
-            .width(176.0)
-            .show_ui(ui, |ui| {
-                for scenario in PreviewScenario::ALL {
-                    if ui
-                        .selectable_label(scenario == preview.scenario, scenario.label())
-                        .clicked()
-                    {
-                        chosen_scenario = Some(scenario);
+        let scenario_picker = styled_combo(ui, palette, |ui| {
+            egui::ComboBox::from_id_salt("preview-scenario-picker")
+                .selected_text(RichText::new(selected_scenario).size(TypeScale::HELPER))
+                .width(176.0)
+                .show_ui(ui, |ui| {
+                    for scenario in PreviewScenario::ALL {
+                        if ui
+                            .selectable_label(scenario == preview.scenario, scenario.label())
+                            .clicked()
+                        {
+                            chosen_scenario = Some(scenario);
+                        }
                     }
-                }
-            });
-        scenario_picker.response.widget_info(|| {
+                })
+                .response
+        });
+        scenario_picker.widget_info(|| {
             WidgetInfo::labeled(
                 egui::Role::ComboBox,
                 true,
