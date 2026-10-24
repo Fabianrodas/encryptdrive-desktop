@@ -40,6 +40,62 @@ pub(crate) enum ButtonKind {
     SubtleDanger,
 }
 
+fn button_font(kind: ButtonKind) -> FontId {
+    if kind == ButtonKind::Primary {
+        semibold_font(TypeScale::CONTROL)
+    } else {
+        FontId::proportional(TypeScale::CONTROL)
+    }
+}
+
+/// Height and horizontal padding for the surrounding density: standard 32 px, compact
+/// 28 px in the status bar (driven by `interact_size`, so one painter serves both).
+fn button_metrics(ui: &egui::Ui) -> (f32, f32) {
+    let height = ui
+        .spacing()
+        .interact_size
+        .y
+        .max(Geometry::COMPACT_CONTROL_HEIGHT);
+    let padding = if height < Geometry::CONTROL_HEIGHT {
+        Geometry::SPACE_2
+    } else {
+        Geometry::SPACE_3
+    };
+    (height, padding)
+}
+
+/// Width a labelled `command_button` allocates, so the command bar can decide what fits
+/// before painting anything.
+#[cfg(feature = "design-preview")]
+pub(crate) fn command_button_width(
+    ui: &egui::Ui,
+    icon: Icon,
+    label: &str,
+    kind: ButtonKind,
+) -> f32 {
+    let painter = ui.painter();
+    let icon_width = painter
+        .layout_no_wrap(
+            icon.glyph().to_string(),
+            icon_font(Geometry::ICON_SIZE),
+            Color32::PLACEHOLDER,
+        )
+        .size()
+        .x;
+    let label_width = painter
+        .layout_no_wrap(label.to_owned(), button_font(kind), Color32::PLACEHOLDER)
+        .size()
+        .x;
+    let (_, padding) = button_metrics(ui);
+    icon_width + Geometry::SPACE_2 + label_width + padding * 2.0
+}
+
+/// Width of `subtle_icon_button` in the current density.
+#[cfg(feature = "design-preview")]
+pub(crate) fn icon_button_width(ui: &egui::Ui) -> f32 {
+    button_metrics(ui).0 + Geometry::BASE
+}
+
 /// Paints and senses a button. `label` is always the accessible name; with
 /// `icon_only` it is shown as a tooltip instead of being drawn.
 fn paint_button(
@@ -68,13 +124,8 @@ fn paint_button(
         )
     });
     let label_galley = (!icon_only).then(|| {
-        let font = if kind == ButtonKind::Primary {
-            semibold_font(TypeScale::CONTROL)
-        } else {
-            FontId::proportional(TypeScale::CONTROL)
-        };
         ui.painter()
-            .layout_no_wrap(label.to_owned(), font, foreground)
+            .layout_no_wrap(label.to_owned(), button_font(kind), foreground)
     });
     let gap = if icon_galley.is_some() && label_galley.is_some() {
         Geometry::SPACE_2
@@ -84,18 +135,7 @@ fn paint_button(
     let content_width = icon_galley.as_ref().map_or(0.0, |g| g.size().x)
         + gap
         + label_galley.as_ref().map_or(0.0, |g| g.size().x);
-    // Height follows the surrounding density (standard 32 px, compact 28 px in the status
-    // bar) via `interact_size`, so one painter serves every context.
-    let height = ui
-        .spacing()
-        .interact_size
-        .y
-        .max(Geometry::COMPACT_CONTROL_HEIGHT);
-    let padding = if height < Geometry::CONTROL_HEIGHT {
-        Geometry::SPACE_2
-    } else {
-        Geometry::SPACE_3
-    };
+    let (height, padding) = button_metrics(ui);
     let width = if icon_only {
         height + Geometry::BASE
     } else {
@@ -372,13 +412,56 @@ pub(crate) fn table_sort_header_button(
 /// Context-menu row with an optional keyboard shortcut hint.
 #[cfg(feature = "design-preview")]
 pub(crate) fn menu_item(ui: &mut egui::Ui, label: &str, shortcut: Option<&str>) -> egui::Response {
-    let mut button = egui::Button::new(label)
+    menu_row(ui, label, egui::Atoms::new(label), shortcut)
+}
+
+/// Overflow-menu row: icon, full label and shortcut hint. Destructive commands keep the
+/// danger colour so they stay distinct inside the menu.
+#[cfg(feature = "design-preview")]
+pub(crate) fn command_menu_item(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    label: &str,
+    kind: ButtonKind,
+    shortcut: Option<&str>,
+    palette: Palette,
+) -> egui::Response {
+    let danger = matches!(kind, ButtonKind::Destructive | ButtonKind::SubtleDanger);
+    let (icon_color, text_color) = match (ui.is_enabled(), danger) {
+        (false, _) => (palette.disabled_text(), palette.disabled_text()),
+        (true, true) => (palette.danger, palette.danger),
+        (true, false) => (palette.icon, palette.text),
+    };
+    menu_row(
+        ui,
+        label,
+        egui::Atoms::new((
+            icon.rich_text(icon_color, Geometry::ICON_SIZE),
+            RichText::new(label).color(text_color),
+        )),
+        shortcut,
+    )
+}
+
+/// Shared menu row. The accessible name is set explicitly so icon glyphs never leak into
+/// what a screen reader announces.
+#[cfg(feature = "design-preview")]
+fn menu_row(
+    ui: &mut egui::Ui,
+    accessible_name: &str,
+    content: egui::Atoms<'_>,
+    shortcut: Option<&str>,
+) -> egui::Response {
+    let mut button = egui::Button::new(content)
         .frame_when_inactive(false)
         .min_size(egui::vec2(200.0, Geometry::CONTROL_HEIGHT));
     if let Some(shortcut) = shortcut {
         button = button.shortcut_text(shortcut);
     }
-    ui.add(button)
+    let response = ui.add(button);
+    let enabled = ui.is_enabled();
+    response.widget_info(|| WidgetInfo::labeled(egui::Role::MenuItem, enabled, accessible_name));
+    response
 }
 
 pub(crate) fn button_activated(ui: &egui::Ui, response: &egui::Response) -> bool {
@@ -1212,6 +1295,37 @@ mod tests {
         }
 
         assert!(activated, "a real pointer click must activate the button");
+    }
+
+    #[cfg(feature = "design-preview")]
+    #[test]
+    fn measured_command_widths_match_the_painted_buttons() {
+        use super::{ButtonKind, command_button, command_button_width, icon_button_width};
+        use crate::design::icons::Icon;
+        let context = egui::Context::default();
+        crate::design::icons::install_font(&context);
+        let palette = Palette::for_theme(egui::Theme::Light);
+        let mut checked = 0;
+        for _ in 0..2 {
+            let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+                ui.spacing_mut().interact_size.y = 32.0;
+                for (label, kind) in [
+                    ("New folder", ButtonKind::Primary),
+                    ("Move to Trash", ButtonKind::Subtle),
+                    ("Delete permanently", ButtonKind::SubtleDanger),
+                ] {
+                    let expected = command_button_width(ui, Icon::Trash, label, kind);
+                    let painted = command_button(ui, Icon::Trash, label, kind, false, palette);
+                    assert!((painted.rect.width() - expected).abs() < 0.01, "{label}");
+                    checked += 1;
+                }
+                let icon_only =
+                    command_button(ui, Icon::More, "More", ButtonKind::Subtle, true, palette);
+                assert_eq!(icon_only.rect.width(), icon_button_width(ui));
+            });
+            output.textures_delta.clear();
+        }
+        assert_eq!(checked, 6);
     }
 
     #[test]

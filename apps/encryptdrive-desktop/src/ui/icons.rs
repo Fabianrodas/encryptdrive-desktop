@@ -31,11 +31,12 @@ pub(crate) enum Icon {
     Close,
     ChevronRight,
     ShieldCheck,
+    More,
 }
 
 impl Icon {
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 25] = [
+    pub(crate) const ALL: [Self; 26] = [
         Self::Files,
         Self::File,
         Self::Trash,
@@ -61,6 +62,7 @@ impl Icon {
         Self::Close,
         Self::ChevronRight,
         Self::ShieldCheck,
+        Self::More,
     ];
 
     pub(crate) fn glyph(self) -> char {
@@ -90,6 +92,8 @@ impl Icon {
             Self::Close => 0xE4F6,
             Self::ChevronRight => 0xE13A,
             Self::ShieldCheck => 0xE40C,
+            // Phosphor `dots-three` (horizontal ellipsis).
+            Self::More => 0xE1FE,
         })
         .expect("all named Phosphor codepoints are valid Unicode scalars")
     }

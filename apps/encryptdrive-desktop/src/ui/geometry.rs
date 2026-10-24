@@ -21,9 +21,6 @@ impl Geometry {
     pub(crate) const SIDEBAR_WIDTH_NARROW: f32 = 184.0;
     /// Window width (logical points) at which the sidebar uses its full width.
     pub(crate) const SIDEBAR_BREAKPOINT: f32 = 1100.0;
-    /// Content widths at which the command bar keeps every label / only the primary label.
-    pub(crate) const COMMAND_LABELS_MIN_WIDTH: f32 = 840.0;
-    pub(crate) const COMMAND_PRIMARY_LABEL_MIN_WIDTH: f32 = 600.0;
     pub(crate) const CONTROL_HEIGHT: f32 = 32.0;
     /// Secondary chrome (status bar): Fluent compact sizing.
     pub(crate) const COMPACT_CONTROL_HEIGHT: f32 = 28.0;

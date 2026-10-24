@@ -11,9 +11,10 @@ use encryptdrive_desktop::{
 use super::app::{DesktopApp, DialogKind, fmt_size};
 use crate::design::{
     components::{
-        ButtonKind, breadcrumb_button, button_activated, command_button, menu_item,
-        paint_focus_ring_rect, paint_selection_pill, search_field, secondary_button,
-        subtle_icon_button, table_sort_header_button,
+        ButtonKind, breadcrumb_button, button_activated, command_button, command_button_width,
+        command_menu_item, icon_button_width, menu_item, paint_focus_ring_rect,
+        paint_selection_pill, search_field, secondary_button, subtle_icon_button,
+        table_sort_header_button,
     },
     geometry::Geometry,
     icons::Icon,
@@ -43,7 +44,6 @@ impl DesktopApp {
                 });
         self.render_page_heading(ui, palette, destination, folder);
         ui.add_space(Geometry::SPACE_2);
-        let density = command_density(ui.available_width());
         let search_has_focus = self.render_command_bar(
             ui,
             palette,
@@ -51,7 +51,6 @@ impl DesktopApp {
             selected_count,
             actions_enabled,
             busy,
-            density,
         );
         ui.add_space(Geometry::SPACE_3);
 
@@ -147,9 +146,9 @@ impl DesktopApp {
         );
     }
 
-    /// Stable command bar: every command is always present and only enables/disables, so
-    /// selecting rows never moves the table. Search sits on the right.
-    #[allow(clippy::too_many_arguments)]
+    /// Stable command bar: every command is always available and only enables/disables, so
+    /// selecting rows never moves the table. Commands stay inline, labelled, in priority
+    /// order while they fit; the rest move into a "More" menu. Search sits on the right.
     fn render_command_bar(
         &mut self,
         ui: &mut egui::Ui,
@@ -158,156 +157,105 @@ impl DesktopApp {
         selected_count: usize,
         actions_enabled: bool,
         busy: bool,
-        density: CommandDensity,
     ) -> bool {
         let mut search_has_focus = false;
         let width = ui.available_width();
-        // Secondary commands drop their labels first; the primary keeps its label longest.
-        let compact = density != CommandDensity::Labels;
-        let primary_compact = density == CommandDensity::IconsOnly;
+        let commands = Command::for_destination(destination);
+        let spacing = Geometry::BASE;
+        let command_widths: Vec<f32> = commands
+            .iter()
+            .map(|command| {
+                let separator = if command.starts_group() {
+                    Geometry::SPACE_3 + spacing
+                } else {
+                    0.0
+                };
+                command_button_width(ui, command.icon(), command.label(), command.kind())
+                    + spacing
+                    + separator
+            })
+            .collect();
+        let (inline, search_width) =
+            command_layout(width, &command_widths, icon_button_width(ui) + spacing);
+        let mut chosen: Option<(Command, egui::Id)> = None;
         ui.allocate_ui_with_layout(
             egui::vec2(width, Geometry::CONTROL_HEIGHT),
             Layout::left_to_right(Align::Center),
             |ui| {
                 ui.set_min_size(egui::vec2(width, Geometry::CONTROL_HEIGHT));
-                ui.spacing_mut().item_spacing.x = Geometry::BASE;
+                ui.spacing_mut().item_spacing.x = spacing;
                 let Some(preview) = &mut self.preview else {
                     return;
                 };
-                let any_selected = selected_count > 0 && actions_enabled;
-                if destination == Destination::Files {
-                    let new_folder = ui
-                        .add_enabled_ui(actions_enabled, |ui| {
-                            command_button(
-                                ui,
-                                Icon::NewFolder,
-                                "New folder",
-                                ButtonKind::Primary,
-                                primary_compact,
-                                palette,
-                            )
-                        })
-                        .inner;
-                    if button_activated(ui, &new_folder) {
-                        self.dialog_invoker = Some(new_folder.id);
-                        preview.input_name.clear();
-                        preview.input_error = None;
-                        preview.dialog = Some(DialogKind::CreateFolder);
+                for &command in &commands[..inline] {
+                    if command.starts_group() {
+                        command_separator(ui, palette);
                     }
-                    ui.add_space(Geometry::BASE);
-                    let import = ui
-                        .add_enabled_ui(actions_enabled, |ui| {
+                    let response = ui
+                        .add_enabled_ui(command.enabled(selected_count, actions_enabled), |ui| {
                             command_button(
                                 ui,
-                                Icon::Import,
-                                "Import",
-                                ButtonKind::Subtle,
-                                compact,
+                                command.icon(),
+                                command.label(),
+                                command.kind(),
+                                false,
                                 palette,
                             )
                         })
                         .inner;
-                    if button_activated(ui, &import) {
-                        self.dialog_invoker = Some(import.id);
-                        preview.dialog = Some(DialogKind::Import);
+                    if button_activated(ui, &response) {
+                        chosen = Some((command, response.id));
                     }
-                    let export = ui
-                        .add_enabled_ui(any_selected, |ui| {
-                            command_button(
-                                ui,
-                                Icon::Export,
-                                "Export",
-                                ButtonKind::Subtle,
-                                compact,
-                                palette,
-                            )
-                        })
-                        .inner;
-                    if button_activated(ui, &export) {
-                        self.dialog_invoker = Some(export.id);
-                        preview.dialog = Some(DialogKind::Export);
-                    }
-                    command_separator(ui, palette);
-                    let rename = ui
-                        .add_enabled_ui(selected_count == 1 && actions_enabled, |ui| {
-                            command_button(
-                                ui,
-                                Icon::Rename,
-                                "Rename",
-                                ButtonKind::Subtle,
-                                compact,
-                                palette,
-                            )
-                        })
-                        .inner;
-                    if button_activated(ui, &rename)
-                        && let Some(id) = rename_target(&preview.explorer.selected_ids())
-                    {
-                        self.dialog_invoker = Some(rename.id);
-                        preview.input_name = preview
-                            .model
-                            .entry(id)
-                            .map_or_else(String::new, |entry| entry.name.clone());
-                        preview.input_error = None;
-                        preview.dialog = Some(DialogKind::Rename);
-                    }
-                    let move_to_trash = ui
-                        .add_enabled_ui(any_selected, |ui| {
-                            command_button(
-                                ui,
-                                Icon::Trash,
-                                "Move to Trash",
-                                ButtonKind::Subtle,
-                                compact,
-                                palette,
-                            )
-                        })
-                        .inner;
-                    if button_activated(ui, &move_to_trash) {
-                        self.dialog_invoker = Some(move_to_trash.id);
-                        preview.dialog = Some(DialogKind::MoveToTrash);
-                    }
-                } else {
-                    let restore = ui
-                        .add_enabled_ui(any_selected, |ui| {
-                            command_button(
-                                ui,
-                                Icon::Restore,
-                                "Restore",
-                                ButtonKind::Subtle,
-                                // Trash has only two commands, so they keep labels longer.
-                                primary_compact,
-                                palette,
-                            )
-                        })
-                        .inner;
-                    if button_activated(ui, &restore) {
-                        let ids = preview.explorer.selected_ids();
-                        preview.model.restore(&ids);
-                        preview.explorer.clear_selection();
-                        preview.notice = Some(restored_message(ids.len()));
-                    }
-                    let delete = ui
-                        .add_enabled_ui(any_selected, |ui| {
-                            command_button(
-                                ui,
-                                Icon::Trash,
-                                "Delete permanently",
-                                ButtonKind::SubtleDanger,
-                                // Trash has only two commands, so they keep labels longer.
-                                primary_compact,
-                                palette,
-                            )
-                        })
-                        .inner;
-                    if button_activated(ui, &delete) {
-                        self.dialog_invoker = Some(delete.id);
-                        preview.dialog = Some(DialogKind::PermanentDelete);
+                }
+                if inline < commands.len() {
+                    let more = subtle_icon_button(ui, Icon::More, "More commands", palette);
+                    let popup_id = egui::Popup::default_response_id(&more);
+                    let was_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+                    let keyboard = more.has_focus();
+                    let toggled = button_activated(ui, &more);
+                    let mut focus_first = toggled && keyboard && !was_open;
+                    egui::Popup::menu(&more)
+                        .open_memory(toggled.then_some(egui::SetOpenCommand::Toggle))
+                        .show(|ui| {
+                            ui.set_min_width(220.0);
+                            for (index, &command) in commands.iter().enumerate().skip(inline) {
+                                if command.starts_group() && index > inline {
+                                    ui.separator();
+                                }
+                                let enabled = command.enabled(selected_count, actions_enabled);
+                                let item = ui
+                                    .add_enabled_ui(enabled, |ui| {
+                                        command_menu_item(
+                                            ui,
+                                            command.icon(),
+                                            command.menu_label(),
+                                            command.kind(),
+                                            command.shortcut(),
+                                            palette,
+                                        )
+                                    })
+                                    .inner;
+                                if focus_first && enabled {
+                                    item.request_focus();
+                                    focus_first = false;
+                                }
+                                if item.clicked() {
+                                    // Dialogs return focus to the More button, which outlives
+                                    // the menu.
+                                    chosen = Some((command, more.id));
+                                    ui.close();
+                                }
+                            }
+                        });
+                    let closed_now = was_open && !egui::Popup::is_id_open(ui.ctx(), popup_id);
+                    let escaped = ui.input(|input| input.key_pressed(egui::Key::Escape));
+                    let opens_dialog = chosen.is_some_and(|(command, _)| command.opens_dialog());
+                    if closed_now && (escaped || (chosen.is_some() && !opens_dialog)) {
+                        more.request_focus();
                     }
                 }
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let search_width = search_width(width, density);
                     let hint = if destination == Destination::Trash {
                         "Search Trash"
                     } else {
@@ -327,7 +275,49 @@ impl DesktopApp {
                 });
             },
         );
+        if let Some((command, invoker)) = chosen {
+            self.run_command(command, invoker);
+        }
         search_has_focus
+    }
+
+    /// Runs a command from the bar or its overflow menu: same dialogs and confirmations
+    /// either way.
+    fn run_command(&mut self, command: Command, invoker: egui::Id) {
+        let Some(preview) = &mut self.preview else {
+            return;
+        };
+        let dialog = match command {
+            Command::NewFolder => {
+                preview.input_name.clear();
+                preview.input_error = None;
+                DialogKind::CreateFolder
+            }
+            Command::Import => DialogKind::Import,
+            Command::Export => DialogKind::Export,
+            Command::Rename => {
+                let Some(id) = rename_target(&preview.explorer.selected_ids()) else {
+                    return;
+                };
+                preview.input_name = preview
+                    .model
+                    .entry(id)
+                    .map_or_else(String::new, |entry| entry.name.clone());
+                preview.input_error = None;
+                DialogKind::Rename
+            }
+            Command::MoveToTrash => DialogKind::MoveToTrash,
+            Command::DeletePermanently => DialogKind::PermanentDelete,
+            Command::Restore => {
+                let ids = preview.explorer.selected_ids();
+                preview.model.restore(&ids);
+                preview.explorer.clear_selection();
+                preview.notice = Some(restored_message(ids.len()));
+                return;
+            }
+        };
+        self.dialog_invoker = Some(invoker);
+        preview.dialog = Some(dialog);
     }
 
     fn render_file_table(&mut self, ui: &mut egui::Ui, palette: Palette, ids: &[EntryId]) {
@@ -964,36 +954,141 @@ fn left_aligned_label(ui: &mut egui::Ui, width: f32, text: RichText) -> egui::Re
     .inner
 }
 
-/// How much text the command bar can afford at a given content width.
+/// Explorer commands, listed in priority order: when space runs out the last ones move
+/// into the "More" menu first.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum CommandDensity {
-    /// Every command shows icon and label.
-    Labels,
-    /// Only the primary command keeps its label; the rest are icon buttons with tooltips.
-    PrimaryLabel,
-    /// Every command is an icon button with a tooltip.
-    IconsOnly,
+pub(super) enum Command {
+    NewFolder,
+    Import,
+    Export,
+    Rename,
+    MoveToTrash,
+    Restore,
+    DeletePermanently,
 }
 
-pub(super) fn command_density(content_width: f32) -> CommandDensity {
-    if content_width >= Geometry::COMMAND_LABELS_MIN_WIDTH {
-        CommandDensity::Labels
-    } else if content_width >= Geometry::COMMAND_PRIMARY_LABEL_MIN_WIDTH {
-        CommandDensity::PrimaryLabel
-    } else {
-        CommandDensity::IconsOnly
+impl Command {
+    const FILES: [Self; 5] = [
+        Self::NewFolder,
+        Self::Import,
+        Self::Export,
+        Self::Rename,
+        Self::MoveToTrash,
+    ];
+    const TRASH: [Self; 2] = [Self::Restore, Self::DeletePermanently];
+
+    pub(super) fn for_destination(destination: Destination) -> &'static [Self] {
+        match destination {
+            Destination::Files => &Self::FILES,
+            Destination::Trash => &Self::TRASH,
+        }
+    }
+
+    fn icon(self) -> Icon {
+        match self {
+            Self::NewFolder => Icon::NewFolder,
+            Self::Import => Icon::Import,
+            Self::Export => Icon::Export,
+            Self::Rename => Icon::Rename,
+            Self::MoveToTrash | Self::DeletePermanently => Icon::Trash,
+            Self::Restore => Icon::Restore,
+        }
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::NewFolder => "New folder",
+            Self::Import => "Import",
+            Self::Export => "Export",
+            Self::Rename => "Rename",
+            Self::MoveToTrash => "Move to Trash",
+            Self::Restore => "Restore",
+            Self::DeletePermanently => "Delete permanently",
+        }
+    }
+
+    /// Menu wording follows Windows: an ellipsis marks commands that open a dialog.
+    pub(super) fn menu_label(self) -> &'static str {
+        match self {
+            Self::NewFolder => "New folder\u{2026}",
+            Self::Import => "Import\u{2026}",
+            Self::Export => "Export\u{2026}",
+            Self::Rename => "Rename\u{2026}",
+            Self::MoveToTrash => "Move to Trash\u{2026}",
+            Self::Restore => "Restore",
+            Self::DeletePermanently => "Delete permanently\u{2026}",
+        }
+    }
+
+    fn kind(self) -> ButtonKind {
+        match self {
+            Self::NewFolder => ButtonKind::Primary,
+            Self::DeletePermanently => ButtonKind::SubtleDanger,
+            _ => ButtonKind::Subtle,
+        }
+    }
+
+    /// Same hints as the row context menu (they act on the focused table).
+    fn shortcut(self) -> Option<&'static str> {
+        match self {
+            Self::Rename => Some("F2"),
+            Self::MoveToTrash => Some("Del"),
+            Self::DeletePermanently => Some("Shift+Del"),
+            _ => None,
+        }
+    }
+
+    /// A separator precedes this command, in the bar and in the menu.
+    fn starts_group(self) -> bool {
+        matches!(self, Self::Rename | Self::DeletePermanently)
+    }
+
+    fn opens_dialog(self) -> bool {
+        self != Self::Restore
+    }
+
+    pub(super) fn enabled(self, selected_count: usize, actions_enabled: bool) -> bool {
+        actions_enabled
+            && match self {
+                Self::NewFolder | Self::Import => true,
+                Self::Rename => selected_count == 1,
+                Self::Export | Self::MoveToTrash | Self::Restore | Self::DeletePermanently => {
+                    selected_count > 0
+                }
+            }
     }
 }
 
-/// Search grows with spare width up to 320 px and never squeezes the commands.
-pub(super) fn search_width(content_width: f32, density: CommandDensity) -> f32 {
-    let reserved_for_commands = match density {
-        CommandDensity::Labels => 640.0,
-        CommandDensity::PrimaryLabel => 400.0,
-        CommandDensity::IconsOnly => 260.0,
-    };
-    (content_width - reserved_for_commands)
-        .clamp(Geometry::SEARCH_MIN_WIDTH, Geometry::SEARCH_MAX_WIDTH)
+/// Splits the bar: how many commands (a prefix, in priority order) stay inline and how
+/// wide the search box is. Search gives up its spare width first; commands move into the
+/// More menu only once search is at its minimum. `command_widths` include spacing.
+pub(super) fn command_layout(
+    content_width: f32,
+    command_widths: &[f32],
+    more_width: f32,
+) -> (usize, f32) {
+    let all: f32 = command_widths.iter().sum();
+    if content_width - all >= Geometry::SEARCH_MIN_WIDTH {
+        return (
+            command_widths.len(),
+            (content_width - all).min(Geometry::SEARCH_MAX_WIDTH),
+        );
+    }
+    let budget = content_width - Geometry::SEARCH_MIN_WIDTH - more_width;
+    let mut used = 0.0;
+    let mut inline = 0;
+    for width in command_widths {
+        if used + width > budget {
+            break;
+        }
+        used += width;
+        inline += 1;
+    }
+    (
+        inline,
+        (content_width - used - more_width)
+            .clamp(Geometry::SEARCH_MIN_WIDTH, Geometry::SEARCH_MAX_WIDTH),
+    )
 }
 
 fn command_separator(ui: &mut egui::Ui, palette: Palette) {
@@ -1713,16 +1808,59 @@ mod tests {
     }
 
     #[test]
-    fn command_bar_collapses_progressively_and_search_stays_within_bounds() {
-        use super::{CommandDensity, command_density, search_width};
-        assert_eq!(command_density(1200.0), CommandDensity::Labels);
-        assert_eq!(command_density(720.0), CommandDensity::PrimaryLabel);
-        assert_eq!(command_density(560.0), CommandDensity::IconsOnly);
-        for width in [400.0, 560.0, 720.0, 904.0, 1300.0, 1800.0] {
-            let search = search_width(width, command_density(width));
-            assert!((160.0..=320.0).contains(&search), "{width} -> {search}");
+    fn command_bar_overflows_lowest_priority_commands_after_search_shrinks() {
+        use super::command_layout;
+        // New folder, Import, Export, Rename (+separator), Move to Trash.
+        let widths = [126.0, 96.0, 96.0, 118.0, 134.0];
+        let more = 40.0;
+        // Wide: everything inline, search capped at 320.
+        assert_eq!(command_layout(1300.0, &widths, more), (5, 320.0));
+        // Spare width goes to search first, down to its 160 minimum.
+        assert_eq!(command_layout(800.0, &widths, more), (5, 230.0));
+        // Below that, commands overflow from the end; search keeps its minimum.
+        let (inline, search) = command_layout(640.0, &widths, more);
+        assert_eq!(inline, 4);
+        assert!((160.0..=320.0).contains(&search));
+        let (inline, _) = command_layout(480.0, &widths, more);
+        assert_eq!(inline, 2, "New folder and Import stay labelled");
+        // Never negative or out of bounds, even when nothing fits.
+        let (inline, search) = command_layout(120.0, &widths, more);
+        assert_eq!(inline, 0);
+        assert_eq!(search, 160.0);
+    }
+
+    #[test]
+    fn every_command_is_reachable_with_unchanged_enablement() {
+        use super::Command;
+        use encryptdrive_desktop::Destination;
+        let files = Command::for_destination(Destination::Files);
+        assert_eq!(
+            files[0],
+            Command::NewFolder,
+            "primary command has top priority"
+        );
+        assert_eq!(files[1], Command::Import);
+        assert_eq!(files.len(), 5);
+        assert_eq!(
+            Command::for_destination(Destination::Trash),
+            [Command::Restore, Command::DeletePermanently]
+        );
+        assert!(Command::NewFolder.enabled(0, true));
+        assert!(!Command::Export.enabled(0, true));
+        assert!(Command::Export.enabled(3, true));
+        assert!(!Command::Rename.enabled(2, true));
+        assert!(Command::Rename.enabled(1, true));
+        assert!(!Command::DeletePermanently.enabled(0, true));
+        assert!(
+            !Command::NewFolder.enabled(0, false),
+            "busy or disabled state"
+        );
+        for command in files
+            .iter()
+            .chain(Command::for_destination(Destination::Trash))
+        {
+            assert!(command.menu_label().starts_with(command.label()));
         }
-        assert_eq!(search_width(1800.0, CommandDensity::Labels), 320.0);
     }
 
     #[test]
