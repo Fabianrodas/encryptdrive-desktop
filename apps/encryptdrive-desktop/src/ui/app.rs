@@ -1155,6 +1155,60 @@ mod tests {
     }
 
     #[test]
+    fn select_all_on_ten_thousand_entries_reports_the_full_scope_in_the_confirmation() {
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut app = super::DesktopApp::new(true);
+        let visible = {
+            let preview = app.preview.as_mut().expect("preview is enabled");
+            preview.dataset_size = DatasetSize::TenThousand;
+            preview.model = PreviewModel::fixture(DatasetSize::TenThousand);
+            preview.explorer.visible_ids(&preview.model).to_vec()
+        };
+        assert!(visible.len() > 1_000, "most rows are off screen");
+        app.table_has_focus = true;
+        context.memory_mut(|memory| memory.request_focus(egui::Id::unique("focused-table")));
+        run_key_event(
+            &mut app,
+            &context,
+            egui::Key::A,
+            egui::Modifiers {
+                ctrl: true,
+                command: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            app.preview.as_ref().unwrap().explorer.selected_ids().len(),
+            visible.len()
+        );
+
+        app.preview.as_mut().unwrap().dialog = Some(DialogKind::MoveToTrash);
+        // The first frame sizes the modal invisibly; the second shows it.
+        render_complete_app_frame(&mut app, &context, Vec::new(), 0.1);
+        let (_, output) = render_complete_app_frame(&mut app, &context, Vec::new(), 0.12);
+        let expected = format!(
+            "{} will be moved to Trash.",
+            super::super::explorer::item_count(visible.len())
+        );
+        let texts: Vec<String> = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .map(|update| {
+                update
+                    .nodes
+                    .iter()
+                    .flat_map(|(_, node)| [node.label(), node.value()])
+                    .flatten()
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(texts.contains(&expected), "{expected:?} not in {texts:?}");
+    }
+
+    #[test]
     fn complete_preview_app_frames_remain_bounded_with_ten_thousand_synthetic_entries() {
         let context = egui::Context::default();
         let mut app = super::DesktopApp::new(true);
