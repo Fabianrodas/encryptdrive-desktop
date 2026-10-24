@@ -82,6 +82,31 @@ impl Palette {
         mix(self.muted, self.surface, 0.35)
     }
 
+    #[cfg_attr(not(feature = "design-preview"), allow(dead_code))]
+    fn is_dark(self) -> bool {
+        self.surface.r() < 128
+    }
+
+    /// Fluent caution InfoBar background (`#FFF4CE` light / `#433519` dark). Mixing the
+    /// warning foreground into the surface produced a muddy olive in Dark.
+    #[cfg_attr(not(feature = "design-preview"), allow(dead_code))]
+    pub(crate) fn caution_surface(self) -> Color32 {
+        if self.is_dark() {
+            rgb(0x433519)
+        } else {
+            rgb(0xFFF4CE)
+        }
+    }
+
+    #[cfg_attr(not(feature = "design-preview"), allow(dead_code))]
+    pub(crate) fn caution_stroke(self) -> Color32 {
+        if self.is_dark() {
+            rgb(0x6B5420)
+        } else {
+            rgb(0xE8D59A)
+        }
+    }
+
     pub(crate) fn icon_foreground(self, selected: bool) -> Color32 {
         if selected {
             self.selected_text
@@ -290,6 +315,19 @@ mod tests {
                     "status text contrast failed in {appearance:?} for {semantic:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn caution_surfaces_keep_text_and_icon_readable_in_both_themes() {
+        for theme in [egui::Theme::Light, egui::Theme::Dark] {
+            let palette = Palette::for_theme(theme);
+            let background = palette.caution_surface();
+            assert!(contrast_ratio(palette.text, background) >= 4.5, "{theme:?}");
+            assert!(
+                contrast_ratio(palette.warning, background) >= 3.0,
+                "{theme:?}"
+            );
         }
     }
 

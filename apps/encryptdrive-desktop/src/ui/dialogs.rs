@@ -304,15 +304,8 @@ fn caption(ui: &mut egui::Ui, text: &str, palette: Palette) {
 /// Fluent InfoBar (warning severity): tinted background, coloured icon, body text.
 fn warning_bar(ui: &mut egui::Ui, text: &str, palette: Palette) {
     Frame::new()
-        .fill(crate::design::theme::mix(
-            palette.surface,
-            palette.warning,
-            0.10,
-        ))
-        .stroke(Stroke::new(
-            1.0,
-            crate::design::theme::mix(palette.separator, palette.warning, 0.35),
-        ))
+        .fill(palette.caution_surface())
+        .stroke(Stroke::new(1.0, palette.caution_stroke()))
         .corner_radius(CornerRadius::same(Geometry::CONTROL_RADIUS))
         .inner_margin(Margin::symmetric(
             Geometry::SPACE_3 as i8,
