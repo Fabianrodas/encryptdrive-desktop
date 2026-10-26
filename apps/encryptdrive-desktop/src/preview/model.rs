@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Destination;
 
@@ -73,6 +73,79 @@ pub enum NameValidationError {
     ParentNotFolder,
     /// The entry to rename does not exist in the active fixture.
     EntryNotFound,
+}
+
+/// A recursive synthetic operation whose scope is confirmed before it runs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecursiveOperation {
+    /// Active entries and their active descendants move to Trash.
+    MoveToTrash,
+    /// Trashed entries and their trashed descendants are removed from the fixture.
+    PermanentDelete,
+}
+
+impl RecursiveOperation {
+    /// The only place this operation reads from: Files for Trash moves, Trash for deletion.
+    pub const fn destination(self) -> Destination {
+        match self {
+            Self::MoveToTrash => Destination::Files,
+            Self::PermanentDelete => Destination::Trash,
+        }
+    }
+}
+
+/// The exact scope of a recursive operation, computed once by [`PreviewModel::plan`].
+/// The confirmation shows these counts and [`PreviewModel::execute_plan`] runs exactly this
+/// set, so the two can never disagree.
+///
+/// Production note: if the affected set changes between confirmation and execution, the
+/// operation must be refused and confirmed again, never silently widened. `execute_plan`
+/// enforces that here by refusing stale plans.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OperationPlan {
+    operation: RecursiveOperation,
+    selected: BTreeSet<EntryId>,
+    affected: BTreeSet<EntryId>,
+    revision: u64,
+}
+
+impl OperationPlan {
+    /// Which operation this plan describes.
+    pub const fn operation(&self) -> RecursiveOperation {
+        self.operation
+    }
+
+    /// Distinct selected entries that exist in the operation's destination.
+    pub const fn selected(&self) -> &BTreeSet<EntryId> {
+        &self.selected
+    }
+
+    /// Every entry the operation changes: the selection plus descendants, deduplicated.
+    pub const fn affected(&self) -> &BTreeSet<EntryId> {
+        &self.affected
+    }
+
+    /// Number of distinct selected entries.
+    pub fn selected_count(&self) -> usize {
+        self.selected.len()
+    }
+
+    /// Number of entries the operation changes.
+    pub fn affected_count(&self) -> usize {
+        self.affected.len()
+    }
+
+    /// Entries included only because they are inside a selected folder.
+    pub fn included_count(&self) -> usize {
+        self.affected.len() - self.selected.len()
+    }
+}
+
+/// Why a plan was not executed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlanError {
+    /// The fixture changed after the plan was made; nothing was modified.
+    Stale,
 }
 
 /// Deterministic in-memory directory tree and Trash fixture.
@@ -276,15 +349,65 @@ impl PreviewModel {
         Ok(())
     }
 
-    /// Moves synthetic entries and their descendants to Trash, preserving their IDs.
-    pub fn move_to_trash(&mut self, ids: &[EntryId], deleted_at: &str) {
-        let affected = self.descendants_including(ids);
-        for id in affected {
-            if let Some(item) = self.entries.get_mut(&id) {
-                item.deleted_at = Some(deleted_at.to_owned());
+    /// Computes the exact scope of `operation` for a selection:
+    /// - selected IDs are deduplicated and kept only if they are in the operation's
+    ///   destination (stale or foreign IDs are ignored);
+    /// - descendants in the same destination are added through an iterative walk over a
+    ///   parent-to-children index, so deep or wide trees cost O(n log n) without recursion,
+    ///   and an entry already reached (a selected descendant of a selected folder) is
+    ///   counted once.
+    pub fn plan(&self, operation: RecursiveOperation, selection: &[EntryId]) -> OperationPlan {
+        let in_scope = |item: &Entry| match operation.destination() {
+            Destination::Files => item.deleted_at.is_none(),
+            Destination::Trash => item.deleted_at.is_some(),
+        };
+        let selected: BTreeSet<EntryId> = selection
+            .iter()
+            .copied()
+            .filter(|id| self.entries.get(id).is_some_and(in_scope))
+            .collect();
+        let affected = self.expand(&selected, in_scope);
+        OperationPlan {
+            operation,
+            selected,
+            affected,
+            revision: self.revision,
+        }
+    }
+
+    /// Runs a plan exactly as confirmed and returns how many entries changed. A plan made
+    /// before any later change to the fixture is refused without modifying anything.
+    pub fn execute_plan(
+        &mut self,
+        plan: &OperationPlan,
+        deleted_at: &str,
+    ) -> Result<usize, PlanError> {
+        let selection: Vec<EntryId> = plan.selected.iter().copied().collect();
+        if plan.revision != self.revision || self.plan(plan.operation, &selection) != *plan {
+            return Err(PlanError::Stale);
+        }
+        for id in &plan.affected {
+            match plan.operation {
+                RecursiveOperation::MoveToTrash => {
+                    if let Some(item) = self.entries.get_mut(id) {
+                        item.deleted_at = Some(deleted_at.to_owned());
+                    }
+                }
+                RecursiveOperation::PermanentDelete => {
+                    self.entries.remove(id);
+                }
             }
         }
         self.revision = self.revision.wrapping_add(1);
+        Ok(plan.affected.len())
+    }
+
+    /// Moves synthetic entries and their descendants to Trash, preserving their IDs.
+    /// Same scope as the confirmation: see [`Self::plan`].
+    pub fn move_to_trash(&mut self, ids: &[EntryId], deleted_at: &str) -> usize {
+        let plan = self.plan(RecursiveOperation::MoveToTrash, ids);
+        self.execute_plan(&plan, deleted_at)
+            .expect("a plan made just now is current")
     }
 
     /// Restores synthetic entries and descendants to their original parent IDs.
@@ -302,7 +425,7 @@ impl PreviewModel {
                 parent = item.parent_id;
             }
         }
-        let affected = self.descendants_including(&roots);
+        let affected = self.expand(&roots.into_iter().collect(), |_| true);
         for id in affected {
             if let Some(item) = self.entries.get_mut(&id) {
                 item.deleted_at = None;
@@ -312,11 +435,11 @@ impl PreviewModel {
     }
 
     /// Permanently removes selected synthetic entries and their descendants.
-    pub fn permanently_delete(&mut self, ids: &[EntryId]) {
-        for id in self.descendants_including(ids) {
-            self.entries.remove(&id);
-        }
-        self.revision = self.revision.wrapping_add(1);
+    /// Same scope as the confirmation: see [`Self::plan`].
+    pub fn permanently_delete(&mut self, ids: &[EntryId]) -> usize {
+        let plan = self.plan(RecursiveOperation::PermanentDelete, ids);
+        self.execute_plan(&plan, "")
+            .expect("a plan made just now is current")
     }
 
     /// Validates a proposed one-segment name against active siblings.
@@ -348,22 +471,29 @@ impl PreviewModel {
         Ok(())
     }
 
-    fn descendants_including(&self, roots: &[EntryId]) -> Vec<EntryId> {
-        let mut result = Vec::with_capacity(roots.len());
-        let mut pending = roots.to_vec();
-        while let Some(id) = pending.pop() {
-            if result.contains(&id) {
-                continue;
+    /// `roots` plus every descendant accepted by `in_scope`, without recursion. The visited
+    /// set also guards against a malformed parent cycle.
+    fn expand(
+        &self,
+        roots: &BTreeSet<EntryId>,
+        in_scope: impl Fn(&Entry) -> bool,
+    ) -> BTreeSet<EntryId> {
+        let mut children: BTreeMap<EntryId, Vec<EntryId>> = BTreeMap::new();
+        for item in self.entries.values().filter(|item| in_scope(item)) {
+            if let Some(parent) = item.parent_id {
+                children.entry(parent).or_default().push(item.id);
             }
-            result.push(id);
-            pending.extend(
-                self.entries
-                    .values()
-                    .filter(|item| item.parent_id == Some(id))
-                    .map(|item| item.id),
-            );
         }
-        result
+        let mut affected = BTreeSet::new();
+        let mut pending: Vec<EntryId> = roots.iter().copied().collect();
+        while let Some(id) = pending.pop() {
+            if affected.insert(id)
+                && let Some(kids) = children.get(&id)
+            {
+                pending.extend(kids);
+            }
+        }
+        affected
     }
 
     fn insert(&mut self, item: Entry) {

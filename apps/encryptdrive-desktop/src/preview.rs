@@ -6,7 +6,10 @@ mod model;
 mod state;
 
 pub use crate::Destination;
-pub use model::{DatasetSize, Entry, EntryId, EntryKind, NameValidationError, PreviewModel};
+pub use model::{
+    DatasetSize, Entry, EntryId, EntryKind, NameValidationError, OperationPlan, PlanError,
+    PreviewModel, RecursiveOperation,
+};
 pub use state::{ExplorerState, Modifier, SortDirection, SortKey};
 
 /// Named screens and states in the design preview.

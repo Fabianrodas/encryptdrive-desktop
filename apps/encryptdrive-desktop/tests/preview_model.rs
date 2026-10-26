@@ -364,3 +364,171 @@ fn sorted_projection_is_cached_until_the_query_or_model_changes() {
     assert_eq!(updated.len(), first.len() + 1);
     assert!(updated.contains(&created));
 }
+
+mod recursive_operation_scope {
+    use std::collections::BTreeSet;
+
+    use encryptdrive_desktop::preview::{
+        DatasetSize, Destination, EntryId, PlanError, PreviewModel, RecursiveOperation,
+    };
+
+    const TRASH: RecursiveOperation = RecursiveOperation::MoveToTrash;
+    const DELETE: RecursiveOperation = RecursiveOperation::PermanentDelete;
+
+    fn ids(values: &[u64]) -> BTreeSet<EntryId> {
+        values.iter().copied().map(EntryId).collect()
+    }
+
+    fn model() -> PreviewModel {
+        PreviewModel::fixture(DatasetSize::OneHundred)
+    }
+
+    #[test]
+    fn one_selected_file_affects_only_itself() {
+        let plan = model().plan(TRASH, &[EntryId(4)]);
+        assert_eq!(plan.affected(), &ids(&[4]));
+        assert_eq!(plan.included_count(), 0);
+    }
+
+    #[test]
+    fn one_empty_folder_affects_only_itself() {
+        let plan = model().plan(TRASH, &[EntryId(3)]);
+        assert_eq!(plan.affected(), &ids(&[3]));
+    }
+
+    #[test]
+    fn a_folder_with_children_includes_them() {
+        let plan = model().plan(TRASH, &[EntryId(2)]);
+        assert_eq!(plan.affected(), &ids(&[2, 201, 202]));
+        assert_eq!((plan.selected_count(), plan.included_count()), (1, 2));
+    }
+
+    #[test]
+    fn nested_folders_are_expanded_to_every_level() {
+        let mut model = model();
+        // Documents › Projects › A › B › C, plus the fixture's existing children.
+        let a = model
+            .create_folder(Some(EntryId(101)), "A", "2026-10-19 09:00")
+            .unwrap();
+        let b = model
+            .create_folder(Some(a), "B", "2026-10-19 09:00")
+            .unwrap();
+        let c = model
+            .create_folder(Some(b), "C", "2026-10-19 09:00")
+            .unwrap();
+        let plan = model.plan(TRASH, &[EntryId(1)]);
+        let mut expected = ids(&[1, 101, 102, 103]);
+        expected.extend([a, b, c]);
+        assert_eq!(plan.affected(), &expected);
+    }
+
+    #[test]
+    fn two_independent_folders_add_up_without_overlap() {
+        let plan = model().plan(TRASH, &[EntryId(1), EntryId(2)]);
+        assert_eq!(plan.affected(), &ids(&[1, 101, 102, 103, 2, 201, 202]));
+        assert_eq!(plan.affected_count(), 7);
+    }
+
+    #[test]
+    fn a_parent_and_its_descendant_selected_together_are_counted_once() {
+        let plan = model().plan(TRASH, &[EntryId(1), EntryId(101), EntryId(103)]);
+        assert_eq!(plan.affected(), &ids(&[1, 101, 102, 103]));
+        assert_eq!(plan.selected_count(), 3);
+        assert_eq!(
+            plan.included_count(),
+            1,
+            "only Shared notes was not selected"
+        );
+    }
+
+    #[test]
+    fn duplicate_and_unknown_ids_are_ignored_safely() {
+        let plan = model().plan(
+            TRASH,
+            &[EntryId(4), EntryId(4), EntryId(424_242), EntryId(4)],
+        );
+        assert_eq!(plan.selected(), &ids(&[4]));
+        assert_eq!(plan.affected(), &ids(&[4]));
+    }
+
+    #[test]
+    fn ten_thousand_selected_roots_affect_exactly_10_005_entries() {
+        let model = PreviewModel::fixture(DatasetSize::TenThousand);
+        let roots = model.list_ids(Destination::Files, None);
+        assert_eq!(roots.len(), 10_000);
+        let started = std::time::Instant::now();
+        let plan = model.plan(TRASH, &roots);
+        let elapsed = started.elapsed();
+        let mut expected: BTreeSet<EntryId> = roots.iter().copied().collect();
+        expected.extend([101, 102, 103, 201, 202].map(EntryId));
+        assert_eq!(plan.affected(), &expected);
+        assert_eq!(
+            (plan.selected_count(), plan.affected_count()),
+            (10_000, 10_005)
+        );
+        assert!(elapsed.as_secs_f64() < 1.0, "planning took {elapsed:?}");
+    }
+
+    #[test]
+    fn executing_a_plan_changes_exactly_its_affected_set() {
+        let mut model = PreviewModel::fixture(DatasetSize::TenThousand);
+        let roots = model.list_ids(Destination::Files, None);
+        let plan = model.plan(TRASH, &roots);
+        assert_eq!(model.execute_plan(&plan, "2026-10-19 10:00"), Ok(10_005));
+        let trashed: BTreeSet<EntryId> = model
+            .entries()
+            .filter(|entry| entry.deleted_at.as_deref() == Some("2026-10-19 10:00"))
+            .map(|entry| entry.id)
+            .collect();
+        assert_eq!(&trashed, plan.affected());
+    }
+
+    #[test]
+    fn permanent_deletion_of_a_folder_removes_its_descendants_only() {
+        let mut model = model();
+        model.move_to_trash(&[EntryId(1)], "2026-10-19 09:00");
+        let plan = model.plan(DELETE, &[EntryId(1)]);
+        assert_eq!(plan.affected(), &ids(&[1, 101, 102, 103]));
+        assert_eq!(model.execute_plan(&plan, ""), Ok(4));
+        for id in [1, 101, 102, 103] {
+            assert!(model.entry(EntryId(id)).is_none());
+        }
+        assert!(
+            model.entry(EntryId(90_000)).is_some(),
+            "other Trash items remain"
+        );
+        assert!(model.entry(EntryId(2)).is_some(), "active items remain");
+    }
+
+    #[test]
+    fn a_plan_made_before_a_change_is_refused_and_changes_nothing() {
+        let mut model = model();
+        let plan = model.plan(TRASH, &[EntryId(1)]);
+        model.rename(EntryId(4), "Renamed.txt").unwrap();
+        let revision = model.revision();
+        assert_eq!(
+            model.execute_plan(&plan, "2026-10-19 10:00"),
+            Err(PlanError::Stale)
+        );
+        assert_eq!(model.revision(), revision);
+        assert!(model.entry(EntryId(1)).unwrap().deleted_at.is_none());
+    }
+
+    #[test]
+    fn destinations_are_kept_apart() {
+        let mut model = model();
+        // Shared notes goes to Trash on its own first.
+        model.move_to_trash(&[EntryId(102)], "2026-10-19 08:00");
+        // Moving Documents later neither re-trashes nor recounts the item already there.
+        let plan = model.plan(TRASH, &[EntryId(1)]);
+        assert_eq!(plan.affected(), &ids(&[1, 101, 103]));
+        model.execute_plan(&plan, "2026-10-19 09:00").unwrap();
+        assert_eq!(
+            model.entry(EntryId(102)).unwrap().deleted_at.as_deref(),
+            Some("2026-10-19 08:00")
+        );
+        // Trash IDs are not in Files scope, and active IDs are not in Trash scope.
+        assert!(model.plan(TRASH, &[EntryId(90_000)]).affected().is_empty());
+        assert!(model.plan(DELETE, &[EntryId(4)]).affected().is_empty());
+    }
+}

@@ -1,6 +1,8 @@
 use eframe::egui::{self, CornerRadius, Frame, Margin, RichText, Stroke};
 
-use encryptdrive_desktop::preview::{EntryId, NameValidationError, OperationState};
+use encryptdrive_desktop::preview::{
+    EntryId, NameValidationError, OperationPlan, OperationState, PlanError, RecursiveOperation,
+};
 
 use super::app::{DesktopApp, DialogKind};
 use crate::design::{
@@ -20,6 +22,7 @@ impl DesktopApp {
             return;
         };
         let Some(dialog) = preview.dialog else {
+            preview.pending_plan = None;
             self.dialog_invoker = None;
             self.focused_dialog = None;
             if let Some(target) = self.focus_return_target.take() {
@@ -37,8 +40,22 @@ impl DesktopApp {
                 .or(self.files_navigation_widget);
         }
         self.focused_dialog = Some(dialog);
-        let selected = preview.explorer.selected_ids();
-        let subject = item_subject(preview, &selected);
+        // Trash and Delete show and run one plan, made when the dialog opens.
+        let operation = match dialog {
+            DialogKind::MoveToTrash => Some(RecursiveOperation::MoveToTrash),
+            DialogKind::PermanentDelete => Some(RecursiveOperation::PermanentDelete),
+            _ => None,
+        };
+        if preview.pending_plan.as_ref().map(OperationPlan::operation) != operation {
+            let selected = preview.explorer.selected_ids();
+            preview.pending_plan =
+                operation.map(|operation| preview.model.plan(operation, &selected));
+        }
+        let scope = preview
+            .pending_plan
+            .as_ref()
+            .map(|plan| scope_message(preview, plan))
+            .unwrap_or_default();
         let title = match dialog {
             DialogKind::CreateFolder => "New folder".to_owned(),
             DialogKind::Rename => "Rename".to_owned(),
@@ -94,7 +111,7 @@ impl DesktopApp {
                         }
                     }
                     DialogKind::MoveToTrash => {
-                        body_text(ui, &format!("{subject} will be moved to Trash."), palette);
+                        body_text(ui, &scope, palette);
                         caption(
                             ui,
                             "Contents of selected folders move with them. You can restore items from Trash.",
@@ -102,11 +119,7 @@ impl DesktopApp {
                         );
                     }
                     DialogKind::PermanentDelete => {
-                        body_text(
-                            ui,
-                            &format!("{subject} will be permanently deleted. This can't be undone."),
-                            palette,
-                        );
+                        body_text(ui, &scope, palette);
                         caption(ui, "Sample data — no real file or vault is affected.", palette);
                     }
                     DialogKind::Import => {
@@ -162,10 +175,10 @@ impl DesktopApp {
                             DialogKind::CreateFolder | DialogKind::Rename => {
                                 form_outcome(dialog, preview)
                             }
-                            DialogKind::MoveToTrash => DialogOutcome::MoveToTrash(selected.clone()),
-                            DialogKind::PermanentDelete => {
-                                DialogOutcome::PermanentlyDelete(selected.clone())
-                            }
+                            DialogKind::MoveToTrash | DialogKind::PermanentDelete => preview
+                                .pending_plan
+                                .clone()
+                                .map_or(DialogOutcome::Cancel, DialogOutcome::RunPlan),
                             DialogKind::Import => DialogOutcome::StartOperation("Importing files"),
                             DialogKind::Export => {
                                 DialogOutcome::StartOperation("Exporting a decrypted copy")
@@ -214,24 +227,41 @@ impl DesktopApp {
                         }
                     }
                 }
-                DialogOutcome::MoveToTrash(ids) => {
+                DialogOutcome::RunPlan(plan) => {
                     if let Some(preview) = &mut self.preview {
-                        preview.model.move_to_trash(&ids, "2026-10-19 10:00");
-                        preview.explorer.clear_selection();
                         preview.dialog = None;
-                        self.focus_return_target =
-                            self.focused_row_widget.or(self.files_navigation_widget);
-                        preview.notice = Some(count_message("Moved", ids.len(), "to Trash"));
-                    }
-                }
-                DialogOutcome::PermanentlyDelete(ids) => {
-                    if let Some(preview) = &mut self.preview {
-                        preview.model.permanently_delete(&ids);
-                        preview.explorer.clear_selection();
-                        preview.dialog = None;
-                        self.focus_return_target =
-                            self.focused_row_widget.or(self.trash_navigation_widget);
-                        preview.notice = Some(count_message("Permanently deleted", ids.len(), ""));
+                        preview.pending_plan = None;
+                        let operation = plan.operation();
+                        self.focus_return_target = self.focused_row_widget.or(match operation {
+                            RecursiveOperation::MoveToTrash => self.files_navigation_widget,
+                            RecursiveOperation::PermanentDelete => self.trash_navigation_widget,
+                        });
+                        // Run only what was confirmed: the selection and fixture must still
+                        // produce the same plan, otherwise nothing changes.
+                        let current = preview
+                            .model
+                            .plan(operation, &preview.explorer.selected_ids());
+                        let result = if current == plan {
+                            preview.model.execute_plan(&plan, "2026-10-19 10:00")
+                        } else {
+                            Err(PlanError::Stale)
+                        };
+                        match result {
+                            Ok(count) => {
+                                preview.explorer.clear_selection();
+                                preview.notice = Some(match operation {
+                                    RecursiveOperation::MoveToTrash => {
+                                        count_message("Moved", count, "to Trash")
+                                    }
+                                    RecursiveOperation::PermanentDelete => {
+                                        count_message("Permanently deleted", count, "")
+                                    }
+                                });
+                            }
+                            Err(PlanError::Stale) => {
+                                preview.error = Some(STALE_PLAN_MESSAGE.to_owned());
+                            }
+                        }
                     }
                 }
                 DialogOutcome::StartOperation(message) => {
@@ -269,6 +299,42 @@ fn item_subject(preview: &super::app::PreviewState, selected: &[EntryId]) -> Str
             .map_or_else(|| "1 item".to_owned(), |entry| format!("“{}”", entry.name)),
         ids => super::explorer::item_count(ids.len()),
     }
+}
+
+/// Shown when the items changed between opening a Trash/Delete dialog and confirming it.
+pub(super) const STALE_PLAN_MESSAGE: &str = "The items changed after the dialog opened, so nothing was moved or deleted. Check the selection and try again.";
+
+/// Confirmation sentence built from the plan the operation will run. When folders bring
+/// in items that were not selected, the total comes first and the extra items are named.
+pub(super) fn scope_message(preview: &super::app::PreviewState, plan: &OperationPlan) -> String {
+    let selected: Vec<EntryId> = plan.selected().iter().copied().collect();
+    let (verb, warning) = match plan.operation() {
+        RecursiveOperation::MoveToTrash => ("will be moved to Trash", ""),
+        RecursiveOperation::PermanentDelete => {
+            ("will be permanently deleted", " This can't be undone.")
+        }
+    };
+    let subject = item_subject(preview, &selected);
+    let included = plan.included_count();
+    if included == 0 {
+        return format!("{subject} {verb}.{warning}");
+    }
+    let (selection, pronoun) = if selected.len() == 1 {
+        (subject, "it")
+    } else {
+        (
+            format!(
+                "the {} you selected",
+                super::explorer::item_count(selected.len())
+            ),
+            "them",
+        )
+    };
+    format!(
+        "{} {verb}: {selection} and {} inside {pronoun}.{warning}",
+        super::explorer::item_count(plan.affected_count()),
+        super::explorer::item_count(included),
+    )
 }
 
 fn count_message(verb: &str, count: usize, suffix: &str) -> String {
@@ -333,8 +399,7 @@ enum DialogOutcome {
     Cancel,
     CreateFolder(Option<EntryId>, String),
     Rename(EntryId, String),
-    MoveToTrash(Vec<EntryId>),
-    PermanentlyDelete(Vec<EntryId>),
+    RunPlan(OperationPlan),
     StartOperation(&'static str),
 }
 
@@ -366,6 +431,7 @@ mod tests {
     use super::{DesktopApp, DialogKind, enter_submits};
     use eframe::egui::{self, Pos2, Rect, Vec2};
     use encryptdrive_desktop::preview::{EntryId, Modifier, OperationState};
+    use std::collections::BTreeSet;
 
     fn key_event(key: egui::Key, pressed: bool, repeat: bool) -> egui::Event {
         egui::Event::Key {
@@ -739,6 +805,190 @@ mod tests {
         assert!(
             app.preview.as_ref().unwrap().model.entry(id).is_none(),
             "a separate Enter on the now-focused destructive action is intentional confirmation"
+        );
+    }
+
+    /// Opens a Trash/Delete dialog for `selection` in `destination` and renders its first
+    /// frame (Cancel focused, plan made).
+    fn open_delete_dialog(
+        destination: encryptdrive_desktop::Destination,
+        selection: &[EntryId],
+        dialog: DialogKind,
+    ) -> (DesktopApp, egui::Context) {
+        let mut app = DesktopApp::new(true);
+        let preview = app.preview.as_mut().expect("preview enabled");
+        if destination == encryptdrive_desktop::Destination::Trash {
+            preview
+                .model
+                .move_to_trash(&[EntryId(1)], "2026-10-19 09:00");
+        }
+        preview.explorer.set_destination(destination);
+        preview.explorer.select_all_visible(selection);
+        preview.dialog = Some(dialog);
+        let context = egui::Context::default();
+        run_dialog_frame(&mut app, &context, None);
+        (app, context)
+    }
+
+    /// Tab from the initially focused Cancel to the confirm button, then a fresh Enter.
+    fn confirm_with_keyboard(app: &mut DesktopApp, context: &egui::Context) {
+        run_dialog_events(app, context, vec![key_event(egui::Key::Tab, true, false)]);
+        run_dialog_events(app, context, vec![key_event(egui::Key::Enter, true, false)]);
+    }
+
+    #[test]
+    fn permanent_deletion_of_a_folder_shows_and_runs_the_same_four_entries() {
+        let (mut app, context) = open_delete_dialog(
+            encryptdrive_desktop::Destination::Trash,
+            &[EntryId(1)],
+            DialogKind::PermanentDelete,
+        );
+        let preview = app.preview.as_ref().unwrap();
+        let plan = preview
+            .pending_plan
+            .clone()
+            .expect("the dialog made a plan");
+        let expected: BTreeSet<EntryId> = [1, 101, 102, 103].into_iter().map(EntryId).collect();
+        assert_eq!(plan.affected(), &expected);
+        assert_eq!((plan.selected_count(), plan.affected_count()), (1, 4));
+        assert_eq!(
+            super::scope_message(preview, &plan),
+            "4 items will be permanently deleted: “Documents” and 3 items inside it. This can't be undone."
+        );
+
+        confirm_with_keyboard(&mut app, &context);
+
+        let preview = app.preview.as_ref().unwrap();
+        assert_eq!(preview.dialog, None);
+        assert_eq!(preview.pending_plan, None);
+        for id in &expected {
+            assert!(preview.model.entry(*id).is_none(), "{id:?} must be deleted");
+        }
+        assert!(
+            preview.model.entry(EntryId(2)).is_some(),
+            "unrelated folder stays"
+        );
+        assert!(
+            preview.model.entry(EntryId(90_000)).is_some(),
+            "other Trash items stay"
+        );
+        assert_eq!(
+            preview.notice.as_deref(),
+            Some("Permanently deleted 4 items.")
+        );
+    }
+
+    #[test]
+    fn a_selection_change_before_confirmation_runs_nothing() {
+        let (mut app, context) = open_delete_dialog(
+            encryptdrive_desktop::Destination::Files,
+            &[EntryId(4)],
+            DialogKind::MoveToTrash,
+        );
+        // The selection now includes a folder with descendants: a wider scope than shown.
+        let preview = app.preview.as_mut().unwrap();
+        preview
+            .explorer
+            .select_all_visible(&[EntryId(1), EntryId(4)]);
+
+        confirm_with_keyboard(&mut app, &context);
+
+        let preview = app.preview.as_ref().unwrap();
+        assert_eq!(preview.dialog, None);
+        for id in [1, 4, 101, 102, 103] {
+            assert!(
+                preview
+                    .model
+                    .entry(EntryId(id))
+                    .unwrap()
+                    .deleted_at
+                    .is_none(),
+                "nothing may move when the scope changed"
+            );
+        }
+        assert_eq!(preview.error.as_deref(), Some(super::STALE_PLAN_MESSAGE));
+        assert_eq!(preview.notice, None);
+    }
+
+    #[test]
+    fn cancelling_a_delete_dialog_discards_its_plan_and_changes_nothing() {
+        let (mut app, context) = open_delete_dialog(
+            encryptdrive_desktop::Destination::Files,
+            &[EntryId(1), EntryId(2)],
+            DialogKind::MoveToTrash,
+        );
+        assert_eq!(
+            app.preview
+                .as_ref()
+                .unwrap()
+                .pending_plan
+                .as_ref()
+                .map(|plan| plan.affected_count()),
+            Some(7)
+        );
+        let revision = app.preview.as_ref().unwrap().model.revision();
+
+        run_dialog_frame(&mut app, &context, Some(egui::Key::Escape));
+        run_dialog_frame(&mut app, &context, None);
+
+        let preview = app.preview.as_ref().unwrap();
+        assert_eq!(preview.dialog, None);
+        assert_eq!(preview.pending_plan, None);
+        assert_eq!(
+            preview.model.revision(),
+            revision,
+            "Escape must not change the fixture"
+        );
+    }
+
+    #[test]
+    fn enter_on_the_opening_frame_or_on_cancel_never_runs_a_recursive_plan() {
+        // Enter arrives on the very frame the dialog opens (same input that opened it).
+        let mut app = DesktopApp::new(true);
+        let preview = app.preview.as_mut().unwrap();
+        preview.explorer.select_all_visible(&[EntryId(1)]);
+        preview.dialog = Some(DialogKind::MoveToTrash);
+        let context = egui::Context::default();
+        run_dialog_frame(&mut app, &context, Some(egui::Key::Enter));
+        let preview = app.preview.as_ref().unwrap();
+        assert_eq!(
+            preview.dialog,
+            Some(DialogKind::MoveToTrash),
+            "opening frame ignores Enter"
+        );
+        assert!(
+            preview
+                .model
+                .entry(EntryId(101))
+                .unwrap()
+                .deleted_at
+                .is_none()
+        );
+
+        // After releasing it, a fresh Enter lands on the focused Cancel.
+        run_dialog_events(
+            &mut app,
+            &context,
+            vec![key_event(egui::Key::Enter, false, false)],
+        );
+        run_dialog_frame(&mut app, &context, Some(egui::Key::Enter));
+        let preview = app.preview.as_ref().unwrap();
+        assert_eq!(preview.dialog, None);
+        assert!(
+            preview
+                .model
+                .entry(EntryId(1))
+                .unwrap()
+                .deleted_at
+                .is_none()
+        );
+        assert!(
+            preview
+                .model
+                .entry(EntryId(101))
+                .unwrap()
+                .deleted_at
+                .is_none()
         );
     }
 

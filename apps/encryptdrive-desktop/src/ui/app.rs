@@ -28,6 +28,8 @@ pub(super) struct PreviewState {
     pub notice: Option<String>,
     pub error: Option<String>,
     pub dialog: Option<DialogKind>,
+    /// Scope of the open Trash/Delete dialog, computed once when it opens.
+    pub pending_plan: Option<encryptdrive_desktop::preview::OperationPlan>,
     pub input_name: String,
     pub input_error: Option<String>,
     pub search_input: String,
@@ -53,6 +55,7 @@ impl PreviewState {
             notice: None,
             error: None,
             dialog: None,
+            pending_plan: None,
             input_name: String::new(),
             input_error: None,
             search_input: String::new(),
@@ -1155,7 +1158,7 @@ mod tests {
     }
 
     #[test]
-    fn select_all_on_ten_thousand_entries_reports_the_full_scope_in_the_confirmation() {
+    fn select_all_on_ten_thousand_entries_confirms_and_runs_exactly_10_005_entries() {
         let context = egui::Context::default();
         context.enable_accesskit();
         let mut app = super::DesktopApp::new(true);
@@ -1165,7 +1168,11 @@ mod tests {
             preview.model = PreviewModel::fixture(DatasetSize::TenThousand);
             preview.explorer.visible_ids(&preview.model).to_vec()
         };
-        assert!(visible.len() > 1_000, "most rows are off screen");
+        assert_eq!(
+            visible.len(),
+            10_000,
+            "every root row, most of them off screen"
+        );
         app.table_has_focus = true;
         context.memory_mut(|memory| memory.request_focus(egui::Id::unique("focused-table")));
         run_key_event(
@@ -1178,20 +1185,75 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(
-            app.preview.as_ref().unwrap().explorer.selected_ids().len(),
-            visible.len()
-        );
+        let selected: std::collections::BTreeSet<EntryId> = app
+            .preview
+            .as_ref()
+            .unwrap()
+            .explorer
+            .selected_ids()
+            .into_iter()
+            .collect();
+        assert_eq!(selected, visible.iter().copied().collect());
 
         app.preview.as_mut().unwrap().dialog = Some(DialogKind::MoveToTrash);
         // The first frame sizes the modal invisibly; the second shows it.
         render_complete_app_frame(&mut app, &context, Vec::new(), 0.1);
         let (_, output) = render_complete_app_frame(&mut app, &context, Vec::new(), 0.12);
-        let expected = format!(
-            "{} will be moved to Trash.",
-            super::super::explorer::item_count(visible.len())
+
+        // The exact affected set: 10,000 roots plus the five entries inside Documents
+        // (Projects, Shared notes, and the note inside Projects) and Photos (two files).
+        let mut expected: std::collections::BTreeSet<EntryId> = visible.iter().copied().collect();
+        expected.extend([101, 102, 103, 201, 202].map(EntryId));
+        let plan = app
+            .preview
+            .as_ref()
+            .unwrap()
+            .pending_plan
+            .clone()
+            .expect("plan made");
+        assert_eq!(plan.selected_count(), 10_000);
+        assert_eq!(plan.affected_count(), 10_005);
+        assert_eq!(plan.affected(), &expected);
+
+        let texts = accessible_labels_and_values(&output);
+        let shown = "10,005 items will be moved to Trash: the 10,000 items you selected and 5 items inside them.";
+        assert!(texts.iter().any(|text| text == shown), "{shown:?} missing");
+        assert!(
+            !texts
+                .iter()
+                .any(|text| text.starts_with("10,000 items will be moved")),
+            "the confirmation must not understate the scope"
         );
-        let texts: Vec<String> = output
+
+        // Confirm with a real click on the dialog's confirm button (the bottom-most
+        // "Move to Trash" button; the command bar has one too).
+        let confirm = accessible_buttons_named(&output, "Move to Trash")
+            .into_iter()
+            .max_by(|a, b| a.y.total_cmp(&b.y))
+            .expect("dialog confirm button");
+        click_app_point(&mut app, &context, confirm, 0.2);
+
+        let preview = app.preview.as_ref().unwrap();
+        assert_eq!(preview.dialog, None);
+        assert_eq!(
+            preview.notice.as_deref(),
+            Some("Moved 10,005 items to Trash.")
+        );
+        let trashed: std::collections::BTreeSet<EntryId> = preview
+            .model
+            .entries()
+            .filter(|entry| entry.deleted_at.as_deref() == Some("2026-10-19 10:00"))
+            .map(|entry| entry.id)
+            .collect();
+        assert_eq!(
+            trashed, expected,
+            "the operation ran exactly the confirmed set"
+        );
+        assert!(preview.model.list_ids(Destination::Files, None).is_empty());
+    }
+
+    fn accessible_labels_and_values(output: &egui::FullOutput) -> Vec<String> {
+        output
             .platform_output
             .accesskit_update
             .as_ref()
@@ -1204,8 +1266,31 @@ mod tests {
                     .map(str::to_owned)
                     .collect()
             })
-            .unwrap_or_default();
-        assert!(texts.contains(&expected), "{expected:?} not in {texts:?}");
+            .unwrap_or_default()
+    }
+
+    fn accessible_buttons_named(output: &egui::FullOutput, name: &str) -> Vec<egui::Pos2> {
+        output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .map(|update| {
+                update
+                    .nodes
+                    .iter()
+                    .filter(|(_, node)| {
+                        node.role() == egui::accesskit::Role::Button && node.label() == Some(name)
+                    })
+                    .filter_map(|(_, node)| node.bounds())
+                    .map(|bounds| {
+                        egui::pos2(
+                            ((bounds.x0 + bounds.x1) / 2.0) as f32,
+                            ((bounds.y0 + bounds.y1) / 2.0) as f32,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     #[test]
