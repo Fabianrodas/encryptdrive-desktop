@@ -1299,6 +1299,128 @@ mod tests {
         assert_eq!(app.preview.as_ref().unwrap().dialog, None);
     }
 
+    /// Focusable or clickable controls that are not fully inside the window, keyed by role
+    /// and name. Table rows are skipped: they live in the table's own scroll area.
+    fn offscreen_controls(output: &egui::FullOutput, screen: egui::Rect) -> Vec<String> {
+        use egui::accesskit::{Action, Role};
+        output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .map(|update| {
+                update
+                    .nodes
+                    .iter()
+                    .filter(|(_, node)| {
+                        node.role() != Role::ListItem
+                            && (node.supports_action(Action::Focus)
+                                || node.supports_action(Action::Click))
+                    })
+                    .filter_map(|(_, node)| {
+                        let bounds = node.bounds()?;
+                        let rect = egui::Rect::from_min_max(
+                            egui::pos2(bounds.x0 as f32, bounds.y0 as f32),
+                            egui::pos2(bounds.x1 as f32, bounds.y1 as f32),
+                        );
+                        (!screen.expand(0.5).contains_rect(rect))
+                            .then(|| format!("{:?} {:?}", node.role(), node.label()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Controls that stay off-screen both at the top of the page and after scrolling to its
+    /// end, i.e. controls the user cannot reach.
+    fn unreachable_controls(app: &mut super::DesktopApp, size: egui::Vec2) -> Vec<String> {
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut frame = eframe::Frame::_new_kittest();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+        let centre = screen.center();
+        let mut run = |time: f64, events: Vec<egui::Event>| {
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| <super::DesktopApp as eframe::App>::ui(app, ui, &mut frame),
+            );
+            output.textures_delta.clear();
+            output
+        };
+        let mut output = run(0.0, Vec::new());
+        for step in 1..3 {
+            output = run(step as f64 * 0.02, Vec::new());
+        }
+        let at_top = offscreen_controls(&output, screen);
+        for step in 3..8 {
+            output = run(
+                step as f64 * 0.02,
+                vec![
+                    egui::Event::PointerMoved(centre),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, -2000.0),
+                        phase: egui::TouchPhase::Move,
+                        source: egui::MouseWheelSource::Unknown,
+                        modifiers: egui::Modifiers::default(),
+                    },
+                ],
+            );
+        }
+        let at_bottom = offscreen_controls(&output, screen);
+        at_top
+            .into_iter()
+            .filter(|control| at_bottom.contains(control))
+            .collect()
+    }
+
+    #[test]
+    fn every_control_is_reachable_at_the_smallest_supported_work_areas() {
+        // Inner sizes the startup policy produces for 1920×1080 at 200 % (960×474) and
+        // 1280×720 at 150 % (853×410), both with a bottom taskbar.
+        let mut failures = Vec::new();
+        for size in [egui::vec2(960.0, 474.0), egui::vec2(853.0, 410.0)] {
+            for (index, scenario) in PreviewScenario::ALL.iter().enumerate() {
+                let mut app = super::DesktopApp::new(true).with_scenario_index(index);
+                let unreachable = unreachable_controls(&mut app, size);
+                if !unreachable.is_empty() {
+                    failures.push(format!("{size:?} {scenario:?}: {unreachable:?}"));
+                }
+            }
+            for dialog in [
+                DialogKind::CreateFolder,
+                DialogKind::Rename,
+                DialogKind::MoveToTrash,
+                DialogKind::PermanentDelete,
+                DialogKind::Import,
+                DialogKind::Export,
+            ] {
+                let mut app = super::DesktopApp::new(true);
+                {
+                    let preview = app.preview.as_mut().unwrap();
+                    // Documents: a folder with descendants, so delete dialogs show the
+                    // longest scope wording.
+                    preview.explorer.select_all_visible(&[EntryId(1)]);
+                    preview.dialog = Some(dialog);
+                }
+                let unreachable = unreachable_controls(&mut app, size);
+                if !unreachable.is_empty() {
+                    failures.push(format!("{size:?} {dialog:?}: {unreachable:?}"));
+                }
+            }
+            let mut app = super::DesktopApp::new(true).with_settings_open(true);
+            let unreachable = unreachable_controls(&mut app, size);
+            if !unreachable.is_empty() {
+                failures.push(format!("{size:?} Settings: {unreachable:?}"));
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
     #[test]
     fn accessibility_tree_has_sort_state_counts_overflow_and_no_icon_glyphs() {
         let context = egui::Context::default();

@@ -23,6 +23,12 @@ impl DesktopApp {
         };
         let scenario = preview.scenario;
         let mut route = None;
+        // Scrolls only when the card is taller than the window (small work areas or high
+        // scaling), so its buttons are always reachable.
+        egui::ScrollArea::vertical()
+            .id_salt("encryptdrive-auth-screen")
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
         let available = ui.available_size();
         ui.allocate_ui_with_layout(available, Layout::top_down(Align::Center), |ui| {
             ui.set_min_size(available);
@@ -178,7 +184,9 @@ impl DesktopApp {
                         }
                     });
                 });
+            ui.add_space(Geometry::SPACE_4);
         });
+            });
         if let Some(scenario) = route {
             self.set_scenario(scenario);
         }

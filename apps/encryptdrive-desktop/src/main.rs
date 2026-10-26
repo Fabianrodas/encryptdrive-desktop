@@ -87,13 +87,21 @@ fn run_native(title: &'static str, app: eframe::AppCreator<'_>) -> eframe::Resul
     let window_icon =
         eframe::icon_data::from_png_bytes(include_bytes!("../assets/brand/encryptdrive-husky.png"))
             .expect("the approved EncryptDrive application icon is valid PNG data");
+    let desired = window_size_argument()
+        .map(eframe::egui::Vec2::from)
+        .unwrap_or(design::work_area::PREFERRED_INNER_SIZE);
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
+        // No fixed minimum here: 880×600 can exceed the work area at high scaling, and
+        // Windows enforces it. The hook (before the window exists) and the first-frame fit
+        // both set `min(880×600, usable work area)`.
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title(title)
-            .with_inner_size(window_size_argument().unwrap_or([1200.0, 760.0]))
-            .with_min_inner_size([880.0, 600.0])
+            .with_inner_size(desired)
             .with_icon(Arc::new(window_icon)),
+        window_builder: Some(Box::new(move |builder| {
+            design::work_area::startup_viewport(builder, desired)
+        })),
         centered: true,
         ..Default::default()
     };
