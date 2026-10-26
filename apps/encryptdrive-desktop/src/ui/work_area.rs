@@ -1,22 +1,35 @@
 //! Window sizing against the monitor work area (the monitor minus the taskbar).
 //!
 //! Units:
-//! - Physical pixels: what Windows reports (`rcWork`, window rects). Virtual-screen
-//!   coordinates, negative on monitors left of or above the primary one.
-//! - Points: egui/winit logical units, physical pixels ÷ scale (DPI / 96, times egui zoom).
+//! - Physical pixels: what Windows reports (`rcWork`, window rects) to this per-monitor
+//!   DPI aware process. Virtual-screen coordinates, negative on monitors left of or above
+//!   the primary one.
+//! - Points: egui units, physical pixels ÷ `pixels_per_point` (DPI / 96 × egui zoom).
 //! - Inner size: the client area egui draws into. Outer size: inner plus decorations
 //!   (title bar and the invisible resize borders, which Windows counts in window rects).
 //!
-//! Policy, applied twice:
-//! 1. Before the window exists (eframe `window_builder` hook): size, minimum and position
-//!    from the primary monitor's work area, DPI and decoration size.
-//! 2. On the first frame: the same rules from the real window geometry. This also covers
-//!    windows that opened elsewhere, and systems where step 1 had no data.
+//! The policy (`plan_startup`) is `min(880×600, usable) <= size <= usable`, centred in the
+//! work area. It runs in two steps with different authority:
 //!
-//! The minimum is `min(880×600, usable inner area)`. A fixed 880×600 minimum is larger
-//! than the work area at high scaling (for example 1920×1080 at 200 % leaves about
-//! 960×478 points), and Windows enforces the minimum, which would push the window behind
-//! the taskbar. The window is never sized or positioned again after startup.
+//! 1. **Estimate, before the window exists** (eframe `window_builder` hook). No window
+//!    exists yet, so `GetDpiForWindow` cannot be used. The only per-monitor DPI source
+//!    without a window is `GetDpiForMonitor`, the same call winit's
+//!    `MonitorHandle::scale_factor` and eframe's own centring make at this point. The
+//!    estimate sets only the initial size and position, never the minimum, so a wrong DPI
+//!    can never make Windows enforce a minimum larger than the work area. It is skipped
+//!    (and reported) when the thread is not per-monitor aware or a query fails.
+//! 2. **Authoritative, on the first frame.** The window exists, and egui's
+//!    `pixels_per_point` comes from winit's per-window scale (`GetDpiForWindow`) and egui's
+//!    zoom. The real decoration size is `outer - inner`. This step sets the minimum and, if
+//!    the estimate was missing or wrong, moves and resizes the window to the plan. eframe
+//!    shows the window right after the first paint and applies these commands immediately
+//!    afterwards, so a wrong estimate can be visible for about one frame. With a correct
+//!    estimate no correction is sent.
+//!
+//! The window is never sized or positioned again after the first frame, so a window the
+//! user moves or resizes is left alone.
+
+use std::sync::OnceLock;
 
 use eframe::egui::{self, Pos2, Rect, Vec2, ViewportBuilder};
 
@@ -26,6 +39,12 @@ pub(crate) const PREFERRED_INNER_SIZE: Vec2 = Vec2::new(1200.0, 760.0);
 pub(crate) const PREFERRED_MIN_INNER_SIZE: Vec2 = Vec2::new(880.0, 600.0);
 /// Fallback when the work area is unknown: assume a bottom taskbar of this height.
 const FALLBACK_TASKBAR_ALLOWANCE: f32 = 48.0;
+/// Integer physical pixels and fractional points differ by under one point after rounding.
+const SIZE_TOLERANCE: f32 = 1.0;
+/// DPI values Windows can report for an effective scale of 100 % to 800 %.
+const PLAUSIBLE_DPI: std::ops::RangeInclusive<u32> = 96..=768;
+/// `DPI_AWARENESS_PER_MONITOR_AWARE`, the value winit's per-monitor v2 context reports.
+const PER_MONITOR_AWARE: i32 = 2;
 
 /// Startup geometry in points.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -33,6 +52,46 @@ pub(crate) struct WindowPlan {
     pub(crate) inner: Vec2,
     pub(crate) min_inner: Vec2,
     pub(crate) outer_position: Pos2,
+}
+
+/// Why the pre-creation estimate was not applied. The window then keeps eframe's
+/// defaults until the first frame sizes it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EstimateSkipped {
+    /// No native query on this platform.
+    #[cfg_attr(windows, allow(dead_code))]
+    Unsupported,
+    /// The hook thread is not per-monitor DPI aware (the value is its `DPI_AWARENESS`).
+    NotPerMonitorAware(i32),
+    WorkAreaUnavailable,
+    DpiUnavailable,
+    DpiOutOfRange(u32),
+    FrameUnavailable,
+}
+
+/// What the pre-creation hook did, kept for the first-frame check.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum StartupEstimate {
+    Applied { dpi: u32, plan: WindowPlan },
+    Skipped(EstimateSkipped),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Startup {
+    desired_inner: Vec2,
+    estimate: StartupEstimate,
+}
+
+static STARTUP: OnceLock<Startup> = OnceLock::new();
+
+/// Raw values from Windows before validation, in physical pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct RawMonitorMetrics {
+    pub(crate) awareness: i32,
+    pub(crate) work: Option<[i32; 4]>,
+    pub(crate) dpi: Option<u32>,
+    /// Decoration extents for that DPI: left, top, right, bottom offsets.
+    pub(crate) frame: Option<[i32; 4]>,
 }
 
 /// Inner area that fits in `work` once the decorations (`frame`) are added.
@@ -58,40 +117,124 @@ pub(crate) fn plan_startup(work: Rect, frame: Vec2, desired_inner: Vec2) -> Wind
     }
 }
 
-/// eframe `window_builder` hook: applies [`plan_startup`] for the primary monitor (where
-/// eframe opens the window). Without native data the builder is returned unchanged and
-/// the first-frame fit does the work.
-pub(crate) fn startup_viewport(builder: ViewportBuilder, desired_inner: Vec2) -> ViewportBuilder {
-    let Some((work, frame)) = native_primary_metrics() else {
-        return builder;
-    };
-    let plan = plan_startup(work, frame, desired_inner);
-    builder
-        .with_inner_size(plan.inner)
-        .with_min_inner_size(plan.min_inner)
-        .with_position(plan.outer_position)
+/// Validates raw monitor values and converts them to points (work area and decorations)
+/// at the reported DPI, with egui zoom 1 (the zoom at startup).
+pub(crate) fn estimate_metrics(
+    raw: RawMonitorMetrics,
+) -> Result<(Rect, Vec2, u32), EstimateSkipped> {
+    if raw.awareness != PER_MONITOR_AWARE {
+        return Err(EstimateSkipped::NotPerMonitorAware(raw.awareness));
+    }
+    let work = raw.work.ok_or(EstimateSkipped::WorkAreaUnavailable)?;
+    let dpi = raw.dpi.ok_or(EstimateSkipped::DpiUnavailable)?;
+    if !PLAUSIBLE_DPI.contains(&dpi) {
+        return Err(EstimateSkipped::DpiOutOfRange(dpi));
+    }
+    let [left, top, right, bottom] = raw.frame.ok_or(EstimateSkipped::FrameUnavailable)?;
+    let scale = dpi as f32 / 96.0;
+    let frame = egui::vec2((right - left) as f32, (bottom - top) as f32) / scale;
+    Ok((physical_to_points(work, scale), frame, dpi))
 }
 
-/// First-frame fit, run once: sets the compatible minimum first (so Windows cannot hold
-/// the window at a larger one), then shrinks and/or moves the window only if it is not
-/// inside the work area of the monitor it is on. It never enlarges the window, and a
-/// window the user moves or resizes later is left alone.
+/// eframe `window_builder` hook (step 1, estimate): initial size and position only. The
+/// minimum is left unset; the first frame sets it from the window's own DPI.
+pub(crate) fn startup_viewport(builder: ViewportBuilder, desired_inner: Vec2) -> ViewportBuilder {
+    let estimate = match native_primary_metrics().and_then(estimate_metrics) {
+        Ok((work, frame, dpi)) => StartupEstimate::Applied {
+            dpi,
+            plan: plan_startup(work, frame, desired_inner),
+        },
+        Err(reason) => StartupEstimate::Skipped(reason),
+    };
+    // Observable without a debugger: printed when the app runs from a console.
+    eprintln!("encryptdrive window: startup estimate {estimate:?}");
+    let _ = STARTUP.set(Startup {
+        desired_inner,
+        estimate,
+    });
+    match estimate {
+        StartupEstimate::Applied { plan, .. } => builder
+            .with_inner_size(plan.inner)
+            .with_position(plan.outer_position),
+        StartupEstimate::Skipped(_) => builder,
+    }
+}
+
+/// First-frame decision, from the real window geometry in points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct FirstFrameFit {
+    pub(crate) min_inner: Vec2,
+    /// New inner size and outer position, when the window does not match the plan or is
+    /// not inside the work area.
+    pub(crate) correction: Option<(Vec2, Pos2)>,
+}
+
+/// Step 2 (authoritative): the plan for this window's monitor and real decorations. A
+/// window that already has the planned size and lies inside the work area is untouched;
+/// one with the planned size that overlaps an edge is nudged inside; anything else is
+/// resized and centred to the plan.
+pub(crate) fn first_frame_fit(
+    outer: Rect,
+    inner: Vec2,
+    work: Rect,
+    desired_inner: Vec2,
+) -> FirstFrameFit {
+    let frame = (outer.size() - inner).max(Vec2::ZERO);
+    let min_inner = minimum_inner_size(work, frame);
+    if work.width() <= 0.0 || work.height() <= 0.0 {
+        return FirstFrameFit {
+            min_inner,
+            correction: None,
+        };
+    }
+    let plan = plan_startup(work, frame, desired_inner);
+    let size_matches = (inner - plan.inner).abs().max_elem() <= SIZE_TOLERANCE;
+    let inside = work.expand(SIZE_TOLERANCE / 2.0).contains_rect(outer);
+    let correction = match (size_matches, inside) {
+        (true, true) => None,
+        (true, false) => Some((inner, nudge_inside(outer, work))),
+        (false, _) => Some((plan.inner, plan.outer_position)),
+    };
+    FirstFrameFit {
+        min_inner,
+        correction,
+    }
+}
+
+/// The closest position that keeps `outer` inside `work` (top-left wins if it cannot fit).
+fn nudge_inside(outer: Rect, work: Rect) -> Pos2 {
+    egui::pos2(
+        outer
+            .min
+            .x
+            .clamp(work.min.x, (work.max.x - outer.width()).max(work.min.x)),
+        outer
+            .min
+            .y
+            .clamp(work.min.y, (work.max.y - outer.height()).max(work.min.y)),
+    )
+}
+
+/// First-frame fit, run once (see module docs, step 2).
 pub(crate) fn fit_window_to_monitor(ctx: &egui::Context, done: &mut bool) {
     if *done {
         return;
     }
-    let (monitor, inner, outer) = ctx.input(|input| {
+    let (monitor, inner, outer, native_pixels_per_point) = ctx.input(|input| {
         let viewport = input.viewport();
         (
             viewport.monitor_size,
             viewport.inner_rect,
             viewport.outer_rect,
+            viewport.native_pixels_per_point,
         )
     });
     let (Some(monitor), Some(inner), Some(outer)) = (monitor, inner, outer) else {
         return;
     };
     *done = true;
+    // Window DPI (winit, GetDpiForWindow) times egui zoom: the factor egui used for these
+    // rects and will use for the commands below.
     let pixels_per_point = ctx.pixels_per_point();
     let work = native_work_area(outer, pixels_per_point).unwrap_or_else(|| {
         Rect::from_min_size(
@@ -99,49 +242,29 @@ pub(crate) fn fit_window_to_monitor(ctx: &egui::Context, done: &mut bool) {
             monitor - egui::vec2(0.0, FALLBACK_TASKBAR_ALLOWANCE),
         )
     });
-    let frame = (outer.size() - inner.size()).max(Vec2::ZERO);
-    ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(minimum_inner_size(
-        work, frame,
-    )));
-    if let Some((inner_size, outer_position)) = fit_to_work_area(outer, inner.size(), work) {
+    let startup = STARTUP.get().copied();
+    let desired_inner = startup.map_or(inner.size(), |startup| startup.desired_inner);
+    let fit = first_frame_fit(outer, inner.size(), work, desired_inner);
+    ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(fit.min_inner));
+    if let Some((inner_size, outer_position)) = fit.correction {
         if inner_size != inner.size() {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(inner_size));
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(outer_position));
     }
+    let window_dpi = native_pixels_per_point.map(|scale| (scale * 96.0).round() as u32);
+    eprintln!(
+        "encryptdrive window: first frame window_dpi={window_dpi:?} estimate={:?} correction={:?} min={:?}",
+        startup.map(|startup| startup.estimate),
+        fit.correction,
+        fit.min_inner
+    );
 }
 
 /// Converts a physical-pixel rectangle (`left, top, right, bottom`) to points.
 pub(crate) fn physical_to_points(rect: [i32; 4], pixels_per_point: f32) -> Rect {
     let [left, top, right, bottom] = rect.map(|value| value as f32 / pixels_per_point);
     Rect::from_min_max(egui::pos2(left, top), egui::pos2(right, bottom))
-}
-
-/// Returns the inner size and outer position that keep the window inside `work`, or
-/// `None` when it already fits. Sizes only shrink; the window is centred in the work area
-/// when it has to shrink and otherwise only nudged inside it.
-pub(crate) fn fit_to_work_area(outer: Rect, inner_size: Vec2, work: Rect) -> Option<(Vec2, Pos2)> {
-    if work.width() <= 0.0 || work.height() <= 0.0 || work.contains_rect(outer) {
-        return None;
-    }
-    let frame = (outer.size() - inner_size).max(Vec2::ZERO);
-    let fitted_inner = inner_size.min(usable_inner(work, frame));
-    let fitted_outer = fitted_inner + frame;
-    let position = if fitted_inner == inner_size {
-        egui::pos2(
-            outer
-                .min
-                .x
-                .clamp(work.min.x, (work.max.x - fitted_outer.x).max(work.min.x)),
-            outer
-                .min
-                .y
-                .clamp(work.min.y, (work.max.y - fitted_outer.y).max(work.min.y)),
-        )
-    } else {
-        work.center() - fitted_outer / 2.0
-    };
-    Some((fitted_inner, position))
 }
 
 /// Work area (in points) of the monitor that contains the window centre.
@@ -157,21 +280,22 @@ fn native_work_area(_outer: Rect, _pixels_per_point: f32) -> Option<Rect> {
     None
 }
 
-/// Primary monitor work area and standard window decoration size, both in points.
-/// Only meaningful once the process is DPI aware, which winit makes it when the event
-/// loop is created (before eframe calls the `window_builder` hook).
+/// Primary monitor values for the estimate. Runs inside the eframe hook, after winit made
+/// the process per-monitor DPI aware.
 #[cfg(windows)]
-fn native_primary_metrics() -> Option<(Rect, Vec2)> {
-    let (work, dpi) = windows::primary_work_area_and_dpi()?;
-    let [left, top, right, bottom] = windows::window_frame(dpi)?;
-    let scale = dpi as f32 / 96.0;
-    let frame = egui::vec2((right - left) as f32, (bottom - top) as f32) / scale;
-    Some((physical_to_points(work, scale), frame))
+fn native_primary_metrics() -> Result<RawMonitorMetrics, EstimateSkipped> {
+    let (work, dpi) = windows::primary_work_area_and_dpi();
+    Ok(RawMonitorMetrics {
+        awareness: windows::thread_dpi_awareness(),
+        work,
+        dpi,
+        frame: dpi.and_then(windows::window_frame),
+    })
 }
 
 #[cfg(not(windows))]
-fn native_primary_metrics() -> Option<(Rect, Vec2)> {
-    None
+fn native_primary_metrics() -> Result<RawMonitorMetrics, EstimateSkipped> {
+    Err(EstimateSkipped::Unsupported)
 }
 
 #[cfg(windows)]
@@ -221,6 +345,8 @@ mod windows {
             ex_style: u32,
             dpi: u32,
         ) -> i32;
+        fn GetThreadDpiAwarenessContext() -> *mut c_void;
+        fn GetAwarenessFromDpiAwarenessContext(context: *mut c_void) -> i32;
     }
 
     #[link(name = "shcore")]
@@ -253,6 +379,14 @@ mod windows {
         ])
     }
 
+    /// `DPI_AWARENESS` of the calling thread: -1 invalid, 0 unaware, 1 system aware,
+    /// 2 per-monitor aware (v1 and v2 both report 2).
+    pub(super) fn thread_dpi_awareness() -> i32 {
+        // SAFETY: both calls take no pointers to our memory; the context returned by the
+        // first is only passed to the second.
+        unsafe { GetAwarenessFromDpiAwarenessContext(GetThreadDpiAwarenessContext()) }
+    }
+
     /// Work area of the monitor nearest to a physical point (read-only query; nothing in
     /// the display configuration changes).
     pub(super) fn monitor_work_area(x: i32, y: i32) -> Option<[i32; 4]> {
@@ -260,15 +394,21 @@ mod windows {
         work_area(unsafe { MonitorFromPoint(Point { x, y }, MONITOR_DEFAULTTONEAREST) })
     }
 
-    /// Primary monitor work area (physical pixels) and its effective DPI.
-    pub(super) fn primary_work_area_and_dpi() -> Option<([i32; 4], u32)> {
+    /// Primary monitor work area (physical pixels) and its effective DPI, each `None` when
+    /// its query fails.
+    pub(super) fn primary_work_area_and_dpi() -> (Option<[i32; 4]>, Option<u32>) {
         // SAFETY: as above; (0, 0) with MONITOR_DEFAULTTOPRIMARY selects the primary monitor.
         let monitor = unsafe { MonitorFromPoint(Point { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) };
-        let work = work_area(monitor)?;
+        let work = work_area(monitor);
+        if work.is_none() {
+            return (None, None);
+        }
         let (mut dpi_x, mut dpi_y) = (0u32, 0u32);
         // SAFETY: `monitor` was validated by `work_area`; both out-pointers are live locals.
+        // Pre-window estimate only: see the module docs for why this call is used here and
+        // why the result never sets the minimum size.
         let hr = unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) };
-        (hr >= 0 && dpi_y >= 96 / 2).then_some((work, dpi_y))
+        (work, (hr >= 0).then_some(dpi_y))
     }
 
     /// Decoration extents (left, top, right, bottom offsets from the client rect) for a
@@ -284,21 +424,34 @@ mod windows {
 #[cfg(test)]
 mod tests {
     use super::{
-        PREFERRED_INNER_SIZE, PREFERRED_MIN_INNER_SIZE, WindowPlan, fit_to_work_area,
-        physical_to_points, plan_startup,
+        EstimateSkipped, PREFERRED_INNER_SIZE, PREFERRED_MIN_INNER_SIZE, RawMonitorMetrics,
+        WindowPlan, estimate_metrics, first_frame_fit, physical_to_points, plan_startup,
     };
-    use eframe::egui::{Rect, Vec2, pos2, vec2};
+    use eframe::egui::{Pos2, Rect, Vec2, pos2, vec2};
 
     /// Decorations measured with `AdjustWindowRectExForDpi(WS_OVERLAPPEDWINDOW)` on this
-    /// Windows 11 machine, in physical pixels: (width, height) at 96, 120, 144 and 192 DPI.
+    /// Windows 11 machine: left, top, right, bottom offsets in physical pixels.
+    fn frame_px(dpi: u32) -> [i32; 4] {
+        match dpi {
+            96 => [-8, -31, 8, 8],
+            120 => [-9, -38, 9, 9],
+            144 => [-11, -45, 11, 11],
+            _ => [-13, -58, 13, 13],
+        }
+    }
+
     fn frame_points(scale: f32) -> Vec2 {
-        let physical = match (scale * 100.0) as u32 {
-            100 => vec2(16.0, 39.0),
-            125 => vec2(18.0, 47.0),
-            150 => vec2(22.0, 56.0),
-            _ => vec2(26.0, 71.0),
-        };
-        physical / scale
+        let [left, top, right, bottom] = frame_px((scale * 96.0).round() as u32);
+        vec2((right - left) as f32, (bottom - top) as f32) / scale
+    }
+
+    fn raw(work: [i32; 4], dpi: u32) -> RawMonitorMetrics {
+        RawMonitorMetrics {
+            awareness: 2,
+            work: Some(work),
+            dpi: Some(dpi),
+            frame: Some(frame_px(dpi)),
+        }
     }
 
     /// Checks every invariant of a plan against its work area.
@@ -319,6 +472,49 @@ mod tests {
                 && plan.min_inner.y <= PREFERRED_MIN_INNER_SIZE.y,
             "{label}"
         );
+    }
+
+    /// What winit and Windows do with a requested inner size and outer position at the
+    /// window's DPI: round to whole physical pixels, add the real decorations. Returns the
+    /// outer and inner rects in points at that DPI, as egui reports them on frame one.
+    fn create_window(inner: Vec2, outer_position: Pos2, window_dpi: u32) -> (Rect, Vec2) {
+        let scale = window_dpi as f32 / 96.0;
+        let [left, top, right, bottom] = frame_px(window_dpi);
+        let inner_px = (inner * scale).round();
+        let outer_px = inner_px + vec2((right - left) as f32, (bottom - top) as f32);
+        let position_px = (outer_position.to_vec2() * scale).round();
+        (
+            Rect::from_min_size(position_px.to_pos2(), outer_px) / scale,
+            inner_px / scale,
+        )
+    }
+
+    /// Full startup in production code: estimate at `estimate_dpi` (or none), window
+    /// created at `window_dpi`, authoritative first frame. Returns the final outer rect and
+    /// the first-frame decision.
+    fn startup(
+        work_px: [i32; 4],
+        estimate_dpi: Option<u32>,
+        window_dpi: u32,
+        desired: Vec2,
+    ) -> (Rect, Vec2, super::FirstFrameFit) {
+        let window_scale = window_dpi as f32 / 96.0;
+        let (inner, position) = match estimate_dpi {
+            Some(dpi) => {
+                let (work, frame, _) = estimate_metrics(raw(work_px, dpi)).unwrap();
+                let plan = plan_startup(work, frame, desired);
+                (plan.inner, plan.outer_position)
+            }
+            // eframe's default: desired size, centred on the monitor ignoring the taskbar.
+            None => (desired, pos2(0.0, 0.0)),
+        };
+        let (outer, inner) = create_window(inner, position, window_dpi);
+        let work = physical_to_points(work_px, window_scale);
+        let fit = first_frame_fit(outer, inner, work, desired);
+        let (final_inner, final_position) = fit.correction.unwrap_or((inner, outer.min));
+        let frame = outer.size() - inner;
+        let final_outer = Rect::from_min_size(final_position, final_inner + frame);
+        (final_outer, final_inner, fit)
     }
 
     #[test]
@@ -430,23 +626,184 @@ mod tests {
     }
 
     #[test]
-    fn a_window_that_fits_is_left_alone() {
-        let work = Rect::from_min_size(pos2(0.0, 0.0), vec2(1536.0, 816.0));
-        let outer = Rect::from_min_size(pos2(100.0, 10.0), vec2(1200.0, 792.0));
-        assert_eq!(fit_to_work_area(outer, vec2(1200.0, 760.0), work), None);
+    fn estimate_converts_work_area_and_frame_at_96_120_144_and_192_dpi() {
+        for (dpi, work_px, expected_work) in [
+            (96, [0, 0, 1920, 1032], vec2(1920.0, 1032.0)),
+            (120, [0, 0, 1920, 1020], vec2(1536.0, 816.0)),
+            (144, [0, 0, 1920, 1008], vec2(1280.0, 672.0)),
+            (192, [0, 0, 1920, 1020], vec2(960.0, 510.0)),
+        ] {
+            let (work, frame, reported) = estimate_metrics(raw(work_px, dpi)).unwrap();
+            assert_eq!(reported, dpi);
+            assert_eq!(work.size(), expected_work, "{dpi}");
+            let scale = dpi as f32 / 96.0;
+            let [left, top, right, bottom] = frame_px(dpi);
+            assert_eq!(
+                frame,
+                vec2((right - left) as f32, (bottom - top) as f32) / scale
+            );
+        }
     }
 
     #[test]
-    fn an_oversized_window_shrinks_inside_the_work_area_and_never_grows() {
+    fn missing_or_invalid_native_data_skips_the_estimate() {
+        let good = raw([0, 0, 1920, 1032], 96);
+        for (label, metrics, expected) in [
+            (
+                "system-aware thread",
+                RawMonitorMetrics {
+                    awareness: 1,
+                    ..good
+                },
+                EstimateSkipped::NotPerMonitorAware(1),
+            ),
+            (
+                "unaware thread",
+                RawMonitorMetrics {
+                    awareness: 0,
+                    ..good
+                },
+                EstimateSkipped::NotPerMonitorAware(0),
+            ),
+            (
+                "no work area",
+                RawMonitorMetrics { work: None, ..good },
+                EstimateSkipped::WorkAreaUnavailable,
+            ),
+            (
+                "DPI query failed",
+                RawMonitorMetrics { dpi: None, ..good },
+                EstimateSkipped::DpiUnavailable,
+            ),
+            (
+                "zero DPI",
+                RawMonitorMetrics {
+                    dpi: Some(0),
+                    ..good
+                },
+                EstimateSkipped::DpiOutOfRange(0),
+            ),
+            (
+                "absurd DPI",
+                RawMonitorMetrics {
+                    dpi: Some(4_000),
+                    ..good
+                },
+                EstimateSkipped::DpiOutOfRange(4_000),
+            ),
+            (
+                "no frame",
+                RawMonitorMetrics {
+                    frame: None,
+                    ..good
+                },
+                EstimateSkipped::FrameUnavailable,
+            ),
+        ] {
+            assert_eq!(estimate_metrics(metrics), Err(expected), "{label}");
+        }
+    }
+
+    #[test]
+    fn a_correct_estimate_needs_no_first_frame_correction_at_any_dpi() {
+        for (label, work_px, dpi) in [
+            ("100 % bottom taskbar", [0, 0, 1920, 1032], 96),
+            ("125 % bottom taskbar", [0, 0, 1920, 1020], 120),
+            ("150 % bottom taskbar", [0, 0, 1920, 1008], 144),
+            ("200 % bottom taskbar", [0, 0, 1920, 984], 192),
+            ("200 % 1020 px work area", [0, 0, 1920, 1020], 192),
+            ("150 % small vertical work area", [0, 0, 1366, 720], 144),
+            ("125 % top taskbar", [0, 60, 1920, 1080], 120),
+            ("125 % left taskbar", [76, 0, 1920, 1080], 120),
+            ("125 % right taskbar", [0, 0, 1844, 1080], 120),
+            ("100 % monitor left of primary", [-1920, 0, 0, 1032], 96),
+            ("200 % monitor above primary", [0, -2160, 3840, -96], 192),
+        ] {
+            let (outer, inner, fit) = startup(work_px, Some(dpi), dpi, PREFERRED_INNER_SIZE);
+            let work = physical_to_points(work_px, dpi as f32 / 96.0);
+            assert_eq!(fit.correction, None, "{label}: {fit:?}");
+            assert!(
+                work.expand(1.0).contains_rect(outer),
+                "{label}: {outer:?} vs {work:?}"
+            );
+            assert!(
+                fit.min_inner.x <= inner.x + 1.0 && fit.min_inner.y <= inner.y + 1.0,
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wrong_or_missing_estimate_is_corrected_from_the_window_dpi() {
+        let work_px = [0, 0, 1920, 1020];
+        // Estimate too low (96 for a 200 % window): window too large, then shrunk.
+        let (outer, inner, fit) = startup(work_px, Some(96), 192, PREFERRED_INNER_SIZE);
+        let work = physical_to_points(work_px, 2.0);
+        assert!(fit.correction.is_some());
+        assert!(work.expand(1.0).contains_rect(outer), "{outer:?}");
+        assert!(fit.min_inner.y < 600.0 && fit.min_inner.y <= inner.y);
+        // Estimate too high (192 for a 100 % window): window too small, then grown.
+        let (outer, inner, fit) = startup(work_px, Some(192), 96, PREFERRED_INNER_SIZE);
+        assert!(fit.correction.is_some());
+        assert_eq!(inner, PREFERRED_INNER_SIZE);
+        assert!(physical_to_points(work_px, 1.0).contains_rect(outer));
+        assert_eq!(fit.min_inner, PREFERRED_MIN_INNER_SIZE);
+        // No estimate at all (query failed): eframe's default is corrected the same way.
+        for dpi in [96, 120, 144, 192] {
+            let (outer, _, fit) = startup(work_px, None, dpi, PREFERRED_INNER_SIZE);
+            let work = physical_to_points(work_px, dpi as f32 / 96.0);
+            assert!(work.expand(1.0).contains_rect(outer), "{dpi}: {fit:?}");
+        }
+    }
+
+    #[test]
+    fn the_first_frame_minimum_never_exceeds_the_usable_area() {
+        for (work_px, dpi) in [
+            ([0, 0, 1920, 1020], 192),
+            ([0, 0, 1280, 672], 144),
+            ([0, 0, 1024, 600], 192),
+        ] {
+            let (_, _, fit) = startup(work_px, Some(dpi), dpi, PREFERRED_INNER_SIZE);
+            let scale = dpi as f32 / 96.0;
+            let work = physical_to_points(work_px, scale);
+            let usable = work.size() - frame_points(scale);
+            // The frame comes from rounded physical pixels: allow float error only.
+            assert!(
+                fit.min_inner.x <= usable.x + 1e-3 && fit.min_inner.y <= usable.y + 1e-3,
+                "{work_px:?}: min {:?} usable {usable:?}",
+                fit.min_inner
+            );
+        }
+    }
+
+    // First-frame behaviour without a startup record (desired = current size), which is
+    // the UX6.1 fit: preserved cases.
+
+    #[test]
+    fn a_window_that_fits_is_left_alone() {
+        let work = Rect::from_min_size(pos2(0.0, 0.0), vec2(1536.0, 816.0));
+        let outer = Rect::from_min_size(pos2(100.0, 10.0), vec2(1200.0, 792.0));
+        let inner = vec2(1200.0, 760.0);
+        assert_eq!(first_frame_fit(outer, inner, work, inner).correction, None);
+    }
+
+    #[test]
+    fn an_oversized_window_shrinks_inside_the_work_area() {
         let work = Rect::from_min_size(pos2(0.0, 0.0), vec2(1536.0, 816.0));
         // 1920×1080 requested; 32 points of title bar.
         let outer = Rect::from_min_size(pos2(-192.0, -148.0), vec2(1920.0, 1112.0));
-        let (inner, position) = fit_to_work_area(outer, vec2(1920.0, 1080.0), work).unwrap();
+        let requested = vec2(1920.0, 1080.0);
+        let (inner, position) = first_frame_fit(outer, requested, work, requested)
+            .correction
+            .unwrap();
         assert_eq!(inner, vec2(1536.0, 784.0));
         assert!(work.contains_rect(Rect::from_min_size(position, inner + vec2(0.0, 32.0))));
         // Only the axis that overflows shrinks.
         let tall = Rect::from_min_size(pos2(100.0, 0.0), vec2(1180.0, 824.0));
-        let (inner, _) = fit_to_work_area(tall, vec2(1180.0, 792.0), work).unwrap();
+        let requested = vec2(1180.0, 792.0);
+        let (inner, _) = first_frame_fit(tall, requested, work, requested)
+            .correction
+            .unwrap();
         assert_eq!(inner, vec2(1180.0, 784.0));
     }
 
@@ -455,8 +812,11 @@ mod tests {
         // Top taskbar: work area starts at y = 40.
         let work = Rect::from_min_max(pos2(0.0, 40.0), pos2(1536.0, 864.0));
         let outer = Rect::from_min_size(pos2(168.0, 20.0), vec2(1200.0, 792.0));
-        let (inner, position) = fit_to_work_area(outer, vec2(1200.0, 760.0), work).unwrap();
-        assert_eq!(inner, vec2(1200.0, 760.0));
+        let inner = vec2(1200.0, 760.0);
+        let (size, position) = first_frame_fit(outer, inner, work, inner)
+            .correction
+            .unwrap();
+        assert_eq!(size, inner);
         assert_eq!(position, pos2(168.0, 40.0));
     }
 
@@ -464,15 +824,19 @@ mod tests {
     fn windows_on_a_secondary_monitor_stay_on_that_monitor() {
         let work = Rect::from_min_max(pos2(-1920.0, 0.0), pos2(0.0, 1032.0));
         let outer = Rect::from_min_size(pos2(-400.0, 100.0), vec2(1200.0, 792.0));
-        let (_, position) = fit_to_work_area(outer, vec2(1200.0, 760.0), work).unwrap();
+        let inner = vec2(1200.0, 760.0);
+        let (_, position) = first_frame_fit(outer, inner, work, inner)
+            .correction
+            .unwrap();
         assert_eq!(position, pos2(-1200.0, 100.0));
     }
 
     #[test]
     fn a_degenerate_work_area_changes_nothing() {
         let outer = Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 792.0));
+        let inner = vec2(1200.0, 760.0);
         assert_eq!(
-            fit_to_work_area(outer, vec2(1200.0, 760.0), Rect::NOTHING),
+            first_frame_fit(outer, inner, Rect::NOTHING, inner).correction,
             None
         );
         // The startup plan degrades to zero-sized values rather than a negative size.
@@ -480,20 +844,45 @@ mod tests {
         assert!(plan.inner.x >= 0.0 && plan.min_inner.y >= 0.0);
     }
 
+    /// The real hook in this (DPI-unaware) test process: the awareness guard skips the
+    /// estimate and the builder keeps no minimum and the requested size.
+    #[test]
+    fn the_hook_never_sets_a_minimum_and_skips_without_per_monitor_awareness() {
+        let builder = super::startup_viewport(
+            eframe::egui::ViewportBuilder::default().with_inner_size(PREFERRED_INNER_SIZE),
+            PREFERRED_INNER_SIZE,
+        );
+        assert_eq!(builder.min_inner_size, None);
+        #[cfg(windows)]
+        {
+            let estimate = super::STARTUP.get().unwrap().estimate;
+            println!("test-process estimate: {estimate:?}");
+            if let super::StartupEstimate::Skipped(EstimateSkipped::NotPerMonitorAware(_)) =
+                estimate
+            {
+                assert_eq!(builder.inner_size, Some(PREFERRED_INNER_SIZE));
+            }
+        }
+    }
+
     /// Read-only queries of the real system; a session without a display may return None.
-    /// These run in a test process that is not DPI aware, so Windows reports values
-    /// virtualised to 96 DPI.
+    /// This test process is not DPI aware, so Windows reports values virtualised to 96 DPI.
     #[cfg(windows)]
     #[test]
     fn native_queries_are_well_formed() {
+        println!(
+            "thread DPI awareness: {}",
+            super::windows::thread_dpi_awareness()
+        );
         if let Some([left, top, right, bottom]) = super::windows::monitor_work_area(0, 0) {
             println!("primary work area (physical px): {left},{top} - {right},{bottom}");
             assert!(right > left && bottom > top);
         }
         for dpi in [96, 120, 144, 192] {
-            if let Some([left, top, right, bottom]) = super::windows::window_frame(dpi) {
-                println!("frame at {dpi} dpi: {}x{}", right - left, bottom - top);
-                assert!(right - left > 0 && bottom - top > 0);
+            let measured = super::windows::window_frame(dpi);
+            println!("frame at {dpi} dpi: {measured:?}");
+            if let Some(frame) = measured {
+                assert_eq!(frame, frame_px(dpi), "test fixture matches this machine");
             }
         }
     }
