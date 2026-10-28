@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EncryptDrive Windows build artifact manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "build_mode", "source", "environment", "artifacts"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+    "build_mode": { "enum": ["baseline", "brepro", "path-remap", "brepro-and-path-remap"] },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision", "dirty"],
+      "properties": {
+        "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "dirty": { "type": "boolean" }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "rustc_version", "rustc_commit_hash", "rustc_host", "cargo_version", "profile", "cargo_lock_sha256", "rustflags", "linker"],
+      "properties": {
+        "target": { "const": "x86_64-pc-windows-msvc" },
+        "rustc_version": { "type": "string", "minLength": 1 },
+        "rustc_commit_hash": { "type": "string", "minLength": 1 },
+        "rustc_host": { "const": "x86_64-pc-windows-msvc" },
+        "cargo_version": { "type": "string", "minLength": 1 },
+        "profile": { "const": "release" },
+        "cargo_lock_sha256": { "type": "string", "pattern": "^[0-9A-Fa-f]{64}$" },
+        "rustflags": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "linker": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "name", "version"],
+          "properties": {
+            "status": { "enum": ["available", "unavailable"] },
+            "name": { "type": ["string", "null"] },
+            "version": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["variant", "features", "relative_path", "cargo_target_relative", "size_bytes", "sha256", "profile", "target", "pe_metadata"],
+        "properties": {
+          "variant": { "enum": ["shell", "design-preview"] },
+          "features": { "type": "array", "items": { "type": "string" } },
+          "relative_path": { "type": "string", "pattern": "^target/phase-1b/artifacts/[^/]+/.+\\.exe$" },
+          "cargo_target_relative": { "type": "string", "pattern": "^target/phase-1b/cargo-target/(shell|design-preview)$" },
+          "size_bytes": { "type": "integer", "minimum": 1 },
+          "sha256": { "type": "string", "pattern": "^[0-9A-Fa-f]{64}$" },
+          "profile": { "const": "release" },
+          "target": { "const": "x86_64-pc-windows-msvc" },
+          "pe_metadata": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["coff_timestamp_hex", "codeview_pdb_file", "codeview_guid", "codeview_age"],
+            "properties": {
+              "coff_timestamp_hex": { "type": "string", "pattern": "^0x[0-9A-Fa-f]{8}$" },
+              "codeview_pdb_file": { "type": ["string", "null"] },
+              "codeview_guid": { "type": ["string", "null"] },
+              "codeview_age": { "type": ["integer", "null"] }
+            }
+          }
+        }
+      }
+    }
+  }
+}
