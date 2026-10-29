@@ -5,7 +5,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "run_id", "build_mode", "source", "environment", "artifacts"],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": { "const": 2 },
     "run_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
     "build_mode": { "enum": ["baseline", "brepro", "path-remap", "brepro-and-path-remap"] },
     "source": {
@@ -33,11 +33,13 @@
         "linker": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["status", "name", "version"],
+          "required": ["status", "name", "version", "detected_from", "usage_proven"],
           "properties": {
             "status": { "enum": ["available", "unavailable"] },
             "name": { "type": ["string", "null"] },
-            "version": { "type": ["string", "null"] }
+            "version": { "type": ["string", "null"] },
+            "detected_from": { "const": "environment-probe" },
+            "usage_proven": { "const": false }
           }
         }
       }

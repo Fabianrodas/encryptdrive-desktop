@@ -1,3 +1,5 @@
+#requires -Version 7.0
+
 $ErrorActionPreference = "Stop"
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot

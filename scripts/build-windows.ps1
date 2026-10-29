@@ -1,3 +1,5 @@
+#requires -Version 7.0
+
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -24,6 +26,9 @@ if (-not $runRoot.StartsWith($repositoryPrefix, [StringComparison]::OrdinalIgnor
     throw 'Artifact output must remain under the repository target directory.'
 }
 if (Test-Path -LiteralPath $runRoot) { throw "Run output already exists; refusing to overwrite '$RunId'." }
+Assert-NoReparsePointPath -Path $repositoryRoot -Root $repositoryRoot -Context 'Repository'
+Assert-NoReparsePointPath -Path $runRoot -Root $repositoryRoot -Context 'Artifact output'
+Assert-NoReparsePointPath -Path $cargoTargetRoot -Root $repositoryRoot -Context 'Cargo target root'
 
 $repoSafe = 'safe.directory=' + $repositoryRoot
 $revision = (& git -c $repoSafe -C $repositoryRoot rev-parse HEAD 2>&1 | Out-String).Trim()
@@ -32,20 +37,32 @@ $statusText = & git -c $repoSafe -C $repositoryRoot status --porcelain=v1 --untr
 if ($LASTEXITCODE -ne 0) { throw 'Could not determine whether the source worktree is dirty.' }
 $dirty = -not [string]::IsNullOrWhiteSpace($statusText)
 
-$rustcLines = @(& rustc --version --verbose 2>&1)
-if ($LASTEXITCODE -ne 0) { throw 'rustc --version --verbose failed.' }
-$rustcVersion = [string]($rustcLines | Select-Object -First 1)
-$rustcCommit = (($rustcLines | Where-Object { $_ -match '^commit-hash:' } | Select-Object -First 1) -replace '^commit-hash:\s*', '')
-$rustcHost = (($rustcLines | Where-Object { $_ -match '^host:' } | Select-Object -First 1) -replace '^host:\s*', '')
-if ($rustcHost -ne $target) { throw "Active rustc host '$rustcHost' does not match required target '$target'." }
-$cargoVersion = [string]((& cargo --version 2>&1 | Out-String).Trim())
-if ($LASTEXITCODE -ne 0) { throw 'cargo --version failed.' }
+Push-Location -LiteralPath $repositoryRoot
+try {
+    $rustcLines = @(& rustc --version --verbose 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw 'rustc --version --verbose failed.' }
+    $rustcVersion = [string]($rustcLines | Select-Object -First 1)
+    $rustcCommit = (($rustcLines | Where-Object { $_ -match '^commit-hash:' } | Select-Object -First 1) -replace '^commit-hash:\s*', '')
+    $rustcHost = (($rustcLines | Where-Object { $_ -match '^host:' } | Select-Object -First 1) -replace '^host:\s*', '')
+    if ($rustcHost -ne $target) { throw "Active rustc host '$rustcHost' does not match required target '$target'." }
+    $cargoVersion = [string]((& cargo --version 2>&1 | Out-String).Trim())
+    if ($LASTEXITCODE -ne 0) { throw 'cargo --version failed.' }
+}
+finally {
+    Pop-Location
+}
 
 $lockPath = Join-Path $repositoryRoot 'Cargo.lock'
 if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) { throw 'Cargo.lock is missing.' }
 $lockHash = (Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash.ToUpperInvariant()
 
-$linkerInfo = [ordered]@{ status = 'unavailable'; name = $null; version = $null }
+$linkerInfo = [ordered]@{
+    status = 'unavailable'
+    name = $null
+    version = $null
+    detected_from = 'environment-probe'
+    usage_proven = $false
+}
 $linkerCandidates = @()
 $vsDevCmdPath = $null
 if (-not [string]::IsNullOrWhiteSpace($env:VCToolsInstallDir)) {
@@ -86,6 +103,8 @@ foreach ($candidate in $linkerCandidates) {
                 status = 'available'
                 name = 'link.exe (MSVC linker)'
                 version = $versionInfo.FileVersion
+                detected_from = 'environment-probe'
+                usage_proven = $false
             }
             break
         }
@@ -126,6 +145,8 @@ try {
     foreach ($variant in @('shell', 'design-preview')) {
         $variantTarget = Join-Path $cargoTargetRoot $variant
         $variantDir = Join-Path $runRoot $variant
+        Assert-NoReparsePointPath -Path $variantTarget -Root $repositoryRoot -Context "Cargo target '$variant'"
+        Assert-NoReparsePointPath -Path $variantDir -Root $runRoot -Context "Artifact variant '$variant'"
         $null = New-Item -ItemType Directory -Path $variantDir -Force
         $null = New-Item -ItemType Directory -Path $cargoTargetRoot -Force
         $env:CARGO_TARGET_DIR = $variantTarget
@@ -203,7 +224,7 @@ try {
     }
 
     $manifest = [ordered]@{
-        schema_version = 1
+        schema_version = 2
         run_id = $RunId
         build_mode = $BuildMode
         source = [ordered]@{ revision = $revision.ToLowerInvariant(); dirty = [bool]$dirty }

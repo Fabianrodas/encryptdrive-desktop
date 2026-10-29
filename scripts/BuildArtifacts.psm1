@@ -1,3 +1,5 @@
+#requires -Version 7.0
+
 Set-StrictMode -Version Latest
 
 function Assert-ManifestValue {
@@ -11,6 +13,71 @@ function Assert-ManifestValue {
         throw "Manifest is missing $Context.$Property."
     }
     return $Object.$Property
+}
+
+function Assert-AllowedManifestProperties {
+    param(
+        [Parameter(Mandatory = $true)] $Object,
+        [Parameter(Mandatory = $true)] [string[]] $Allowed,
+        [Parameter(Mandatory = $true)] [string] $Context
+    )
+
+    if ($null -eq $Object -or $Object -isnot [System.Management.Automation.PSCustomObject]) {
+        throw "Manifest $Context must be a JSON object."
+    }
+    $allowedSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($name in $Allowed) { $null = $allowedSet.Add($name) }
+    foreach ($property in $Object.PSObject.Properties) {
+        if (-not $allowedSet.Contains($property.Name)) {
+            throw "Unsupported property '$($property.Name)' in $Context."
+        }
+    }
+}
+
+function Assert-NoReparsePointPath {
+    param(
+        [Parameter(Mandatory = $true)] [string] $Path,
+        [Parameter(Mandatory = $true)] [string] $Root,
+        [Parameter(Mandatory = $true)] [string] $Context
+    )
+
+    $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    $rootItem = Get-Item -LiteralPath $rootFull -Force -ErrorAction Stop
+    if (($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "$Context root must not be a reparse point."
+    }
+
+    $pathFull = [IO.Path]::GetFullPath($Path)
+    if ($pathFull.Equals($rootFull, [StringComparison]::OrdinalIgnoreCase)) { return }
+    $rootPrefix = $rootFull + [IO.Path]::DirectorySeparatorChar
+    if (-not $pathFull.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "$Context path must remain beneath its permitted root."
+    }
+
+    $relative = [IO.Path]::GetRelativePath($rootFull, $pathFull)
+    if ($relative -match '(^|[\\/])\.\.?([\\/]|$)') {
+        throw "$Context path contains a traversal segment."
+    }
+    $current = $rootFull
+    foreach ($segment in ($relative -split '[\\/]')) {
+        if ([string]::IsNullOrWhiteSpace($segment)) { continue }
+        $current = Join-Path $current $segment
+        if (-not (Test-Path -LiteralPath $current)) { continue }
+        $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "$Context path traverses a reparse point."
+        }
+    }
+}
+
+function Test-FileContainsAsciiMarker {
+    param(
+        [Parameter(Mandatory = $true)] [string] $Path,
+        [Parameter(Mandatory = $true)] [string] $Marker
+    )
+
+    $contents = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($Path))
+    return $contents.IndexOf($Marker, [StringComparison]::Ordinal) -ge 0
 }
 
 function Test-BuildArtifactManifest {
@@ -27,6 +94,9 @@ function Test-BuildArtifactManifest {
         throw "Repository root does not exist: $RepositoryRoot"
     }
 
+    $resolvedRoot = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $RepositoryRoot).Path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    Assert-NoReparsePointPath -Path $ManifestPath -Root $resolvedRoot -Context 'Manifest'
+
     try {
         $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
     }
@@ -34,8 +104,10 @@ function Test-BuildArtifactManifest {
         throw "Build artifact manifest is not valid JSON: $($_.Exception.Message)"
     }
 
-    if ((Assert-ManifestValue $manifest 'schema_version' 'manifest') -ne 1) {
-        throw 'Unsupported build artifact manifest schema_version; expected 1.'
+    Assert-AllowedManifestProperties -Object $manifest -Allowed @('schema_version', 'run_id', 'build_mode', 'source', 'environment', 'artifacts') -Context 'manifest'
+
+    if ((Assert-ManifestValue $manifest 'schema_version' 'manifest') -ne 2) {
+        throw 'Unsupported build artifact manifest schema_version; expected 2.'
     }
     $buildMode = [string](Assert-ManifestValue $manifest 'build_mode' 'manifest')
     if ($buildMode -notin @('baseline', 'brepro', 'path-remap', 'brepro-and-path-remap')) {
@@ -48,6 +120,7 @@ function Test-BuildArtifactManifest {
     }
 
     $source = Assert-ManifestValue $manifest 'source' 'manifest'
+    Assert-AllowedManifestProperties -Object $source -Allowed @('revision', 'dirty') -Context 'source'
     $revision = [string](Assert-ManifestValue $source 'revision' 'source')
     if ($revision -notmatch '^[0-9a-fA-F]{40}$') {
         throw 'source.revision must be a full 40-character Git commit ID.'
@@ -58,6 +131,7 @@ function Test-BuildArtifactManifest {
     }
 
     $environment = Assert-ManifestValue $manifest 'environment' 'manifest'
+    Assert-AllowedManifestProperties -Object $environment -Allowed @('target', 'rustc_version', 'rustc_commit_hash', 'rustc_host', 'cargo_version', 'profile', 'cargo_lock_sha256', 'rustflags', 'linker') -Context 'environment'
     $target = [string](Assert-ManifestValue $environment 'target' 'environment')
     if ($target -ne 'x86_64-pc-windows-msvc') {
         throw "Unsupported target '$target'; this workflow is Windows x64/MSVC only."
@@ -94,7 +168,15 @@ function Test-BuildArtifactManifest {
         throw "environment.rustflags do not match build_mode '$buildMode'."
     }
     $linker = Assert-ManifestValue $environment 'linker' 'environment'
+    Assert-AllowedManifestProperties -Object $linker -Allowed @('status', 'name', 'version', 'detected_from', 'usage_proven') -Context 'linker'
     $linkerStatus = [string](Assert-ManifestValue $linker 'status' 'linker')
+    if ((Assert-ManifestValue $linker 'detected_from' 'linker') -cne 'environment-probe') {
+        throw "linker.detected_from must be 'environment-probe'."
+    }
+    $linkerUsageProven = Assert-ManifestValue $linker 'usage_proven' 'linker'
+    if ($linkerUsageProven -isnot [bool] -or $linkerUsageProven) {
+        throw 'linker.usage_proven must be false; this workflow records environment detection only.'
+    }
     if ($linkerStatus -eq 'available') {
         if ([string]::IsNullOrWhiteSpace([string](Assert-ManifestValue $linker 'name' 'linker')) -or
             [string]::IsNullOrWhiteSpace([string](Assert-ManifestValue $linker 'version' 'linker'))) {
@@ -122,10 +204,12 @@ function Test-BuildArtifactManifest {
     }
     $seenVariants = @{}
     $seenPaths = @{}
-    $resolvedRoot = (Resolve-Path -LiteralPath $RepositoryRoot).Path.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
     $rootPrefix = $resolvedRoot + [IO.Path]::DirectorySeparatorChar
+    $runArtifactRoot = Join-Path $resolvedRoot "target\phase-1b\artifacts\$runId"
+    Assert-NoReparsePointPath -Path $runArtifactRoot -Root $resolvedRoot -Context 'Artifact run root'
 
     foreach ($artifact in $artifacts) {
+        Assert-AllowedManifestProperties -Object $artifact -Allowed @('variant', 'features', 'relative_path', 'cargo_target_relative', 'size_bytes', 'sha256', 'profile', 'target', 'pe_metadata') -Context 'artifact'
         $variant = [string](Assert-ManifestValue $artifact 'variant' 'artifact')
         if (-not $expectedFeatures.ContainsKey($variant)) { throw "Unexpected artifact variant '$variant'." }
         if ($seenVariants.ContainsKey($variant)) { throw "Duplicate artifact variant '$variant'." }
@@ -162,15 +246,27 @@ function Test-BuildArtifactManifest {
         if (-not (Test-Path -LiteralPath $cargoTargetPath -PathType Container)) {
             throw "Artifact '$variant' Cargo target directory is missing."
         }
+        Assert-NoReparsePointPath -Path $cargoTargetPath -Root $resolvedRoot -Context "Artifact '$variant' Cargo target"
         $pathKey = $relativePath.ToLowerInvariant()
         if ($seenPaths.ContainsKey($pathKey)) { throw "Variants share an output path: $relativePath" }
         $seenPaths[$pathKey] = $true
+
+        $shortRevision = $revision.Substring(0, 12).ToLowerInvariant()
+        $expectedRelativePath = "target/phase-1b/artifacts/$runId/$variant/EncryptDrive-$variant-$shortRevision-$runId.exe"
+        if (-not $relativePath.Equals($expectedRelativePath, [StringComparison]::Ordinal)) {
+            throw "Artifact '$variant' path does not match its expected artifact path '$expectedRelativePath'."
+        }
 
         $filePath = Join-Path $resolvedRoot ($relativePath -replace '/', [string][IO.Path]::DirectorySeparatorChar)
         if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
             throw "Artifact '$variant' does not exist at its manifest path."
         }
+        Assert-NoReparsePointPath -Path $filePath -Root $runArtifactRoot -Context "Artifact '$variant'"
         $resolvedFile = (Resolve-Path -LiteralPath $filePath).Path
+        $artifactRunPrefix = $runArtifactRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if (-not $resolvedFile.StartsWith($artifactRunPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Artifact '$variant' resolves outside its permitted artifact run root."
+        }
         if (-not $resolvedFile.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
             throw "Artifact '$variant' resolves outside the repository root."
         }
@@ -191,8 +287,16 @@ function Test-BuildArtifactManifest {
         if (-not $actualHash.Equals($expectedHash, [StringComparison]::OrdinalIgnoreCase)) {
             throw "Artifact '$variant' SHA-256 does not match the file bytes."
         }
+        $hasPreviewMarker = Test-FileContainsAsciiMarker -Path $resolvedFile -Marker '--design-preview'
+        if ($variant -eq 'design-preview' -and -not $hasPreviewMarker) {
+            throw "Artifact 'design-preview' is missing marker '--design-preview'."
+        }
+        if ($variant -eq 'shell' -and $hasPreviewMarker) {
+            throw "Artifact 'shell' contains marker '--design-preview'."
+        }
 
         $pe = Assert-ManifestValue $artifact 'pe_metadata' "artifact '$variant'"
+        Assert-AllowedManifestProperties -Object $pe -Allowed @('coff_timestamp_hex', 'codeview_pdb_file', 'codeview_guid', 'codeview_age') -Context 'pe_metadata'
         $timestamp = [string](Assert-ManifestValue $pe 'coff_timestamp_hex' "artifact '$variant'.pe_metadata")
         if ($timestamp -notmatch '^0x[0-9A-Fa-f]{8}$') {
             throw "Artifact '$variant' has an invalid PE COFF timestamp value."
@@ -311,4 +415,4 @@ function Get-PeBuildMetadata {
     return [pscustomobject]$result
 }
 
-Export-ModuleMember -Function Test-BuildArtifactManifest, Get-PeBuildMetadata
+Export-ModuleMember -Function Test-BuildArtifactManifest, Get-PeBuildMetadata, Assert-NoReparsePointPath
