@@ -34,3 +34,76 @@ The application source makes no network, account, user-file, or vault operations
 - The exact Windows production graph has license metadata coverage; a full license-text/notice audit is still required before distribution.
 - The Rust product license, Microsoft runtime redistribution plan, clean-host offline launch, UI Automation/Narrator behavior, and supported Windows matrix remain owner/release gates.
 - The Phase 0.7 Slint licensing review remains separate; Slint is not a production dependency.
+
+## Current Phase 1B-2 inventory — 2026-10-29
+
+**Status:** Local dependency inventory, clean Windows Release pair, and PE import inspection passed for implementation commit `894aeb116fe685dee9864be6dbea469c32d2b15c` on `dev`. The worktree was clean for both builds. The generated inventory and binaries remain in ignored `target/`; they are not committed, uploaded, or published. Hosted CI has not run for this local commit.
+
+This is a reproducible metadata and build-input record, not a complete legal review, SBOM certification, vulnerability audit, installer approval, or clean-host runtime result. It does not authorize a product license or Microsoft runtime redistribution.
+
+### Inventory layers and measured counts
+
+The generator reads [`Cargo.lock`](../../Cargo.lock), runs `cargo metadata --locked` for the full locked package set, and runs target-filtered metadata for the application’s `shell` and `design-preview` feature configurations. It traverses the application root’s normal and build dependency edges, excluding dev-only edges, to report the Windows package graph. Stable package IDs omit source URLs and filesystem paths; non-workspace source identities use a SHA-256 fingerprint.
+
+| Layer | Verified result |
+|---|---|
+| `Cargo.lock` package records | 367; the count matches Cargo metadata |
+| Locked source classes | 362 crates.io registry packages and 5 workspace packages; no Git or external path sources |
+| Registry checksums | 362 of 362 registry records have Cargo.lock checksums |
+| Windows `shell` graph | 161 packages: 1 root, 3 direct, 157 transitive; Cargo CLI feature request is empty |
+| Windows `design-preview` graph | 161 packages: 1 root, 3 direct, 157 transitive; root feature request is `design-preview` |
+| Graph comparison | Same package identities in both variants; only the desktop root’s enabled feature set differs (`default` versus `default, design-preview`) |
+
+The application’s direct dependencies remain `eframe 0.37.0`, `egui_extras 0.37.0`, and workspace `encryptdrive-core 0.1.0`. The synthetic preview is still not a real-vault implementation. `vault-format`, `vault-crypto`, and `vault-storage` are not direct desktop dependencies. This Phase 1B-2 change did not alter `Cargo.toml` or `Cargo.lock`.
+
+### License metadata exceptions
+
+All 362 registry packages declare a raw Cargo `license` expression; none declares `license_file`. All five workspace packages have neither field: `encryptdrive-core`, `encryptdrive-desktop`, `vault-crypto`, `vault-format`, and `vault-storage`. Their missing product-license metadata is preserved as missing; no license is inferred. The Rust product license remains undecided.
+
+The inventory preserves expressions verbatim and does not parse, normalize, or interpret SPDX terms. In particular, it does not reinterpret `OR` as `AND`. The following metadata should be checked against upstream license texts and notice obligations by the owner/legal reviewer before distribution:
+
+- `epaint_default_fonts 0.37.0` declares `(MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0`; `Ubuntu-font-1.0` is recorded as-is and is not validated here.
+- Slash-delimited forms occur in `bitflags 1.3.2` and 12 other records (`MIT/Apache-2.0`), `pollster 1.0.1` and `rustc-hash 1.1.0` (`Apache-2.0/MIT`), and `same-file 1.0.6` and `walkdir 2.5.0` (`Unlicense/MIT`). They are not normalized by this tool.
+- `self_cell 1.3.0` declares `Apache-2.0 OR GPL-2.0-only`; the inventory does not decide distribution obligations or which alternative applies.
+- `unicode-ident 1.0.27` declares `(MIT OR Apache-2.0) AND Unicode-3.0`; `dpi 0.1.2` declares `Apache-2.0 AND MIT`.
+
+No crate license texts, `NOTICE` files, action-bundle licenses, or license compatibility conclusions were reviewed in this phase. An external license-text/notice audit and an explicit Rust product-license decision remain open.
+
+### Build identity and native imports
+
+Both artifacts were built from clean source revision `894aeb116fe685dee9864be6dbea469c32d2b15c`, target `x86_64-pc-windows-msvc`, profile `release`, Rust `1.99.1` (`58cf8f9c35b355199727627d07ae34a4e2846d67`), Cargo `1.99.1` (`5f94df478`), and lockfile SHA-256 `3CB09A9815F937F30137C3B9169F33834B1412CEAD428406613A65C99A64D754`.
+
+| Variant | Size | Raw executable SHA-256 |
+|---|---:|---|
+| Shell | 14,875,648 bytes | `581643DB6860F008060245E7B2D328A24D1A6433FE73689FA23A67B175DBA494` |
+| Design preview | 15,534,592 bytes | `1F09E4845FF0B0AFBEB8DE1157B5DA494C34FEED8B817B44C29E68760347277C` |
+
+These are raw SHA-256 values of the local release executables. Cargo build logs contained one `Compiling` observation per variant (`encryptdrive-desktop`); dependencies were already present in the isolated Cargo target caches. The report therefore records those as partial compiler-log observations, not a complete compiled or linked package list. The locked/resolved package graph is not proof that every package was compiled or statically linked.
+
+`dumpbin /DEPENDENTS` version `14.51.36260.0` reported the same 27 static PE import names for each executable:
+
+```text
+api-ms-win-core-synch-l1-2-0.dll, api-ms-win-core-winrt-error-l1-1-0.dll
+api-ms-win-crt-heap-l1-1-0.dll, api-ms-win-crt-locale-l1-1-0.dll
+api-ms-win-crt-math-l1-1-0.dll, api-ms-win-crt-runtime-l1-1-0.dll
+api-ms-win-crt-stdio-l1-1-0.dll, api-ms-win-crt-string-l1-1-0.dll
+api-ms-win-shcore-scaling-l1-1-1.dll, bcryptprimitives.dll, combase.dll
+dwmapi.dll, dwrite.dll, dxgi.dll, gdi32.dll, imm32.dll, kernel32.dll
+ntdll.dll, ole32.dll, oleaut32.dll, opengl32.dll, setupapi.dll, shell32.dll
+uiautomationcore.dll, user32.dll, uxtheme.dll, vcruntime140.dll
+```
+
+The build manifest detected `link.exe (MSVC linker) 14.51.36260.0` from the environment, with `usage_proven=false`; it does not independently establish which linker Cargo invoked. The PE import list is static and does not enumerate modules loaded dynamically at runtime. The `VCRUNTIME140.dll` import is a runtime dependency finding, not a decision to bundle or redistribute a Microsoft runtime. Windows runtime installation policy, redistribution terms, supported OS floor, clean-host launch, and disconnected-network cold launch remain unverified gates.
+
+### CI supply-chain controls
+
+The Windows workflow now pins:
+
+| Action | Immutable commit | Upstream reference verified |
+|---|---|---|
+| `actions/checkout` | `3d3c42e5aac5ba805825da76410c181273ba90b1` | [v7.0.1 release](https://github.com/actions/checkout/releases/tag/v7.0.1); the pinned [`action.yml`](https://raw.githubusercontent.com/actions/checkout/3d3c42e5aac5ba805825da76410c181273ba90b1/action.yml) declares Node 24 |
+| `dtolnay/rust-toolchain` | `d124f86f28ff42855784ff3319f48ac182c248f8` | The pinned [`action.yml`](https://raw.githubusercontent.com/dtolnay/rust-toolchain/d124f86f28ff42855784ff3319f48ac182c248f8/action.yml) selects Rust `1.99.1` |
+
+The workflow retains `contents: read`, sets checkout `persist-credentials: false`, and uploads no build artifacts. CI depends on network access to retrieve actions, toolchains, and Cargo sources; this is separate from the application’s offline-runtime requirement. Pinning the action source does not audit every license or transitive component in the action bundles.
+
+The [Phase 1B-2 implementation record](../roadmap/PHASE_1B_DEPENDENCY_INVENTORY.md) describes the generator, automated checks, limitations, and remaining review gates. The inventory JSON is intentionally generated under ignored `target/phase-1b/dependency-inventory/` and is not committed.
