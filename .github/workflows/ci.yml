@@ -33,6 +33,9 @@ jobs:
       - name: Test build manifest rejection paths
         shell: pwsh
         run: ./scripts/tests/verify-build-artifacts.tests.ps1
+      - name: Test PowerShell runner exit-code propagation
+        shell: pwsh
+        run: ./scripts/tests/verify-powershell-wrapper.tests.ps1
       - name: Build isolated Windows release variants
         shell: pwsh
         run: ./scripts/build-windows.ps1 -RunId "ci-${{ github.run_id }}-${{ github.run_attempt }}"
