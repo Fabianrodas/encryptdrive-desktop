@@ -56,6 +56,57 @@ try {
     }
     $global:LASTEXITCODE = 0
     Write-Output 'PASS: GitHub Actions pwsh wrapper propagates an intentional assertion failure.'
+
+    $dependencySuite = Join-Path $PSScriptRoot 'verify-dependency-inventory.tests.ps1'
+    $dependencyStandalone = Invoke-PowerShellChild ($commonArguments + @('-File', $dependencySuite))
+    if ($dependencyStandalone.exit_code -ne 0) {
+        throw "Standalone dependency inventory suite failed with exit $($dependencyStandalone.exit_code):`n$($dependencyStandalone.output)"
+    }
+    $global:LASTEXITCODE = 0
+    Write-Output 'PASS: standalone dependency inventory suite exits 0.'
+
+    $dependencyWrapped = Invoke-PowerShellChild ($commonArguments + @('-Command', (Get-GitHubPwshCommand $dependencySuite)))
+    if ($dependencyWrapped.exit_code -ne 0) {
+        throw "GitHub Actions dependency inventory wrapper emulation failed with exit $($dependencyWrapped.exit_code):`n$($dependencyWrapped.output)"
+    }
+    $global:LASTEXITCODE = 0
+    Write-Output 'PASS: GitHub Actions dependency inventory wrapper emulation exits 0.'
+
+    $dependencyRoot = Join-Path $testRoot 'dependency-inventory'
+    $dependencyTests = Join-Path $dependencyRoot 'tests'
+    $null = New-Item -ItemType Directory -Path $dependencyTests -Force
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\DependencyInventory.psm1') -Destination (Join-Path $dependencyRoot 'DependencyInventory.psm1')
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\verify-dependency-inventory.ps1') -Destination (Join-Path $dependencyRoot 'verify-dependency-inventory.ps1')
+
+    $dependencySource = Get-Content -LiteralPath $dependencySuite -Raw
+    $cargoGenerationStart = $dependencySource.IndexOf('$repositoryRoot = (Resolve-Path')
+    if ($cargoGenerationStart -lt 0) { throw 'Could not isolate the dependency inventory assertions before the Cargo generation block.' }
+    $isolatedSource = $dependencySource.Substring(0, $cargoGenerationStart) + "Write-Output 'PASS: isolated dependency inventory assertions.'`r`n"
+    $isolatedSuite = Join-Path $dependencyTests 'verify-dependency-inventory-isolated.tests.ps1'
+    [IO.File]::WriteAllText($isolatedSuite, $isolatedSource, [Text.UTF8Encoding]::new($false))
+
+    $isolatedWrapped = Invoke-PowerShellChild ($commonArguments + @('-Command', (Get-GitHubPwshCommand $isolatedSuite)))
+    if ($isolatedWrapped.exit_code -ne 0) {
+        throw "Isolated dependency inventory assertions failed under GitHub Actions wrapper emulation with exit $($isolatedWrapped.exit_code):`n$($isolatedWrapped.output)"
+    }
+    $global:LASTEXITCODE = 0
+    Write-Output 'PASS: isolated dependency inventory assertions without Cargo generation exit 0 under wrapper emulation.'
+
+    $badAssertion = Join-Path $dependencyTests 'intentional-dependency-assertion-failure.tests.ps1'
+    [IO.File]::WriteAllText($badAssertion, $isolatedSource + "Assert-True `$false 'intentional dependency assertion failure probe'`r`n", [Text.UTF8Encoding]::new($false))
+    $badStandalone = Invoke-PowerShellChild ($commonArguments + @('-File', $badAssertion))
+    if ($badStandalone.exit_code -eq 0 -or $badStandalone.output -notmatch 'ASSERTION FAILED: intentional dependency assertion failure probe') {
+        throw "Standalone dependency assertion probe did not fail at its intended assertion: exit=$($badStandalone.exit_code):`n$($badStandalone.output)"
+    }
+    $global:LASTEXITCODE = 0
+    Write-Output 'PASS: standalone dependency inventory suite propagates an intentional assertion failure.'
+
+    $badWrapped = Invoke-PowerShellChild ($commonArguments + @('-Command', (Get-GitHubPwshCommand $badAssertion)))
+    if ($badWrapped.exit_code -eq 0 -or $badWrapped.output -notmatch 'ASSERTION FAILED: intentional dependency assertion failure probe') {
+        throw "Wrapped dependency assertion probe did not fail at its intended assertion: exit=$($badWrapped.exit_code):`n$($badWrapped.output)"
+    }
+    $global:LASTEXITCODE = 0
+    Write-Output 'PASS: GitHub Actions dependency inventory wrapper propagates an intentional assertion failure.'
 }
 finally {
     if (Test-Path -LiteralPath $testRoot) {

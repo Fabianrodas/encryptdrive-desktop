@@ -370,6 +370,17 @@ function New-DependencyInventory {
 }
 
 function Test-DependencyInventoryDocument {
+    <#
+    .SYNOPSIS
+    Checks the structure and internal consistency of a dependency inventory document.
+
+    .DESCRIPTION
+    Validates required fields, recorded counts, package identities, references, and
+    redaction invariants. This is a structural check only: it does not independently
+    rederive the document from the current Cargo.lock, Cargo metadata, or executables,
+    and it does not prove the document's integrity, authenticity, or equivalence to
+    current source and build inputs.
+    #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)] $Inventory)
 

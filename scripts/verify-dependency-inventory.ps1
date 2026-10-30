@@ -1,5 +1,30 @@
 #requires -Version 7.0
 
+<#
+.SYNOPSIS
+Generates or structurally validates a Windows dependency inventory.
+
+.DESCRIPTION
+Generation reads the current locked Cargo inputs and, when supplied, records build
+evidence from the given build manifest. In CI, the build manifest is verified by the
+preceding build-artifact validation step.
+
+ValidateOnly checks document structure and internal consistency only. It does not
+independently rederive all facts from the current Cargo.lock, Cargo metadata, or
+executables, and it does not prove inventory integrity, authenticity, or equivalence
+to current source/build inputs.
+
+.PARAMETER ValidateOnly
+Validate the inventory document's structure and internal consistency without
+regenerating or independently corroborating it against current source/build inputs.
+
+.PARAMETER InventoryPath
+Path to an existing inventory document; required with ValidateOnly.
+
+.NOTES
+Use the normal generation path, together with the verified build-manifest workflow,
+when current Cargo and build evidence is required.
+#>
 [CmdletBinding()]
 param(
     [switch] $ValidateOnly,
@@ -21,7 +46,8 @@ try {
         try { $inventory = Get-Content -LiteralPath $InventoryPath -Raw | ConvertFrom-Json }
         catch { throw "Inventory is not valid JSON: $($_.Exception.Message)" }
         $null = Test-DependencyInventoryDocument -Inventory $inventory
-        Write-Output "Verified dependency inventory: $($inventory.lockfile.package_count) lockfile package records; shell=$(@($inventory.configurations | Where-Object name -eq 'shell').resolved_package_count), design-preview=$(@($inventory.configurations | Where-Object name -eq 'design-preview').resolved_package_count) Windows-resolved packages."
+        Write-Output "Structurally valid dependency inventory: $($inventory.lockfile.package_count) lockfile package records; shell=$(@($inventory.configurations | Where-Object name -eq 'shell').resolved_package_count), design-preview=$(@($inventory.configurations | Where-Object name -eq 'design-preview').resolved_package_count) Windows-resolved packages."
+        Write-Output 'ValidateOnly checks document structure and internal consistency only; it does not prove integrity, authenticity, or equivalence to current Cargo/build inputs.'
         if ($null -ne $inventory.build_evidence) { Write-Output "Build evidence: $($inventory.build_evidence.source_revision), native imports=$($inventory.build_evidence.native_import_status)." }
         exit 0
     }

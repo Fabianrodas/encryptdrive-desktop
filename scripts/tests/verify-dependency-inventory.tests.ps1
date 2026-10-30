@@ -113,9 +113,23 @@ try {
     $malformedExit = $LASTEXITCODE
     Assert-True ($malformedExit -ne 0) 'malformed inventory JSON must fail the command-line validator'
     Assert-True ($malformedOutput.Contains('valid JSON', [StringComparison]::OrdinalIgnoreCase)) 'malformed JSON rejection must explain the input problem'
+    $global:LASTEXITCODE = 0
 }
 finally {
     Remove-Item -LiteralPath $malformedPath -Force -ErrorAction SilentlyContinue
+}
+
+$validInventoryPath = Join-Path $env:TEMP "encryptdrive-dependency-inventory-valid-$PID-$([guid]::NewGuid().ToString('N')).json"
+try {
+    [IO.File]::WriteAllText($validInventoryPath, (($valid | ConvertTo-Json -Depth 60) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    $validateOutput = & $pwshPath -NoProfile -File $validatorPath -ValidateOnly -InventoryPath $validInventoryPath 2>&1 | Out-String
+    $validateExit = $LASTEXITCODE
+    Assert-True ($validateExit -eq 0) 'a structurally consistent inventory must pass ValidateOnly'
+    Assert-True ($validateOutput.Contains('Structurally valid dependency inventory', [StringComparison]::Ordinal)) 'ValidateOnly success must identify its limited structural validation scope'
+    Assert-True (-not $validateOutput.Contains('Verified dependency inventory', [StringComparison]::Ordinal)) 'ValidateOnly must not claim independent verification'
+}
+finally {
+    Remove-Item -LiteralPath $validInventoryPath -Force -ErrorAction SilentlyContinue
 }
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -129,4 +143,4 @@ Assert-True (@($generated.configurations | Where-Object { $_.resolved_package_co
 $serialized = $generated | ConvertTo-Json -Depth 60
 Assert-True (-not $serialized.Contains($env:USERPROFILE, [StringComparison]::OrdinalIgnoreCase)) 'generated inventory must not expose a machine-specific Cargo or repository path'
 
-Write-Output 'PASS: valid inventory, malformed JSON, missing fields, inconsistent counts/identity/license, missing lock reference/configuration, registry checksum, workspace classification, and absolute-path redaction cases.'
+Write-Output 'PASS: structural ValidateOnly wording and limitation, valid inventory, malformed JSON, missing fields, inconsistent counts/identity/license, missing lock reference/configuration, registry checksum, workspace classification, and absolute-path redaction cases.'
