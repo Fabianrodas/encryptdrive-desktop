@@ -45,14 +45,29 @@ This is a reproducible metadata and build-input record, not a complete legal rev
 
 The generator reads [`Cargo.lock`](../../Cargo.lock), runs `cargo metadata --locked` for the full locked package set, and runs target-filtered metadata for the application’s `shell` and `design-preview` feature configurations. It traverses the application root’s normal and build dependency edges, excluding dev-only edges, to report the Windows package graph. Stable package IDs omit source URLs and filesystem paths; non-workspace source identities use a SHA-256 fingerprint.
 
-| Layer | Verified result |
+| Layer | Measured result |
 |---|---|
 | `Cargo.lock` package records | 367; the count matches Cargo metadata |
 | Locked source classes | 362 crates.io registry packages and 5 workspace packages; no Git or external path sources |
 | Registry checksums | 362 of 362 registry records have Cargo.lock checksums |
 | Windows `shell` graph | 161 packages: 1 root, 3 direct, 157 transitive; Cargo CLI feature request is empty |
 | Windows `design-preview` graph | 161 packages: 1 root, 3 direct, 157 transitive; root feature request is `design-preview` |
-| Graph comparison | Same package identities in both variants; only the desktop root’s enabled feature set differs (`default` versus `default, design-preview`) |
+| Metadata graph edges | 398 normal/build dependency edges in each variant; both variants have the same package identities and edges |
+| Application-scoped `cargo tree` | 152 unique `(name, version)` identities in each variant using the normal/build edge view; same identities for shell and preview |
+| Metadata versus `cargo tree` | The metadata traversal contains 9 identities not shown in the application-scoped `cargo tree` result; `cargo tree` has no additional identities |
+
+These are different resolution views, not compiled or linked package counts. The inventory runs workspace `cargo metadata --locked`, then traverses normal/build edges from the desktop root; the graph includes build-time and proc-macro dependencies and can conservatively reflect workspace feature unification. The application-scoped comparison was rerun on 2026-10-29 with:
+
+```powershell
+cargo tree --locked --target x86_64-pc-windows-msvc --edges normal,build --package encryptdrive-desktop --no-default-features --prefix none --format '{p}'
+cargo tree --locked --target x86_64-pc-windows-msvc --edges normal,build --package encryptdrive-desktop --no-default-features --features encryptdrive-desktop/design-preview --prefix none --format '{p}'
+```
+
+The 9 metadata-only identities were `getrandom 0.3.4`, `pkg-config 0.3.34`, `serde 1.0.229`, `serde_core 1.0.229`, `serde_derive 1.0.229`, `termcolor 1.4.1`, `tracing-attributes 0.1.31`, `winapi-util 0.1.11`, and `zlib-rs 0.6.8`. This is recorded as a conservative metadata/workspace feature-unification over-approximation; it does not establish that those packages were compiled or linked into either executable. The current workspace manifest declares `resolver = "3"`, so these measurements must not be described as having been produced under resolver v2. The inventory algorithm remains unchanged; the two counts are retained with their respective methods.
+
+For both metadata and CLI views, shell and preview have identical package identities and dependency edges; only the desktop root feature list changes from `default` to `default, design-preview`.
+
+`ValidateOnly` runs `Test-DependencyInventoryDocument` and checks schema and internal consistency only. Its success means **structurally valid**; the mode does not independently rederive the inventory from current `Cargo.lock`, Cargo metadata, or executables and does not prove integrity, authenticity, or equivalence to current source/build inputs. The normal CI generation path remains separate: it consumes current locked Cargo inputs and runs after the workflow’s build-manifest verification, then validates the generated serialization. Neither mode is a cryptographic attestation.
 
 The application’s direct dependencies remain `eframe 0.37.0`, `egui_extras 0.37.0`, and workspace `encryptdrive-core 0.1.0`. The synthetic preview is still not a real-vault implementation. `vault-format`, `vault-crypto`, and `vault-storage` are not direct desktop dependencies. This Phase 1B-2 change did not alter `Cargo.toml` or `Cargo.lock`.
 
