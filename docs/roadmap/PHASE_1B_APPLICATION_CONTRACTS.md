@@ -1,6 +1,6 @@
 # Phase 1B-3 — Application Command, Event, and Session Contracts
 
-**Status:** Local documentation candidate; independent review and owner approval pending
+**Status:** PROPOSED — READY FOR OWNER DISPOSITION; PENDING OWNER APPROVAL
 **Baseline commit:** `b7d134bf5e3a6778f3c89b03e63e659fa7b2e50d`
 **Baseline CI:** [Run 40995708450](https://github.com/Fabianrodas/encryptdrive-desktop/actions/runs/40995708450), completed successfully for the baseline SHA
 **Scope:** Contract design only; no production interfaces or vault functionality are implemented.
@@ -41,18 +41,19 @@ No ADR is created because this milestone proposes contracts for review rather th
 
 ## 4. Decision and disposition table
 
-All new contract principles below remain proposals pending owner disposition; none is recorded as already approved. The table separates stable principles from future mechanism choices.
+All new contract principles below remain proposals pending owner disposition; none is recorded as already approved. The candidate principles are recommended for owner acceptance, while implementation mechanisms remain deferred. The table separates stable principles from future mechanism choices.
 
 | Disposition | Principle or verified fact | Phase 1B-3 status |
 |---|---|---|
 | Verified current | eframe/egui 0.37 and UX6.3 remain the approved UI baseline; the Desktop declares a direct dependency on `encryptdrive-core`, and the architecture validator checks the declared package boundary. | Existing decision and checked package graph; validator does not check API calls. |
 | Verified current | The Desktop calls no core API and the shell does not consume `readiness()`; there is no implemented production command, event, or session behavior. | Confirmed current-source status; no proposed behavior should be described as implemented. |
 | Verified current | The design preview remains synthetic and separate from production storage; persistent-format and conformance rules remain language-independent. | Existing boundaries to preserve. |
-| Candidate principle for owner acceptance now | A duplicate delivery with the same request identity refers to the original known acceptance, operation, or terminal status. If status cannot be established, report `Indeterminate`; never convert it to a new no-effect rejection or automatically repeat an irreversible mutation because acknowledgement was lost. | Corrected P1 proposal; no permanent exactly-once or unlimited deduplication promise. |
+| Candidate principle for owner acceptance now | A duplicate delivery with the same request identity refers to its original known status. An expired/unrecognized identifier is not presumed to be a fresh destructive request; when prior execution cannot safely be ruled out, remain `Indeterminate` or otherwise non-executing. Admit a new intent only with a fresh identity and current authorization/precondition checks; never automatically replay an irreversible mutation or treat target revalidation alone as proof of safety. | Corrected P1 and N1 proposal; bounded retention, identity validity and recovery remain deferred; no permanent exactly-once or unlimited deduplication promise. |
 | Candidate principle for owner acceptance now | Each independent user intent has a distinct request identity; a new request rejection makes a no-effect claim only about that request. IDs exposed for support are opaque, non-sensitive, scoped-unique, independently generated, and never authorization credentials. | Proposed identity and outcome semantics; representation remains open. |
 | Candidate principle for owner acceptance now | A definitive terminal outcome ends its operation; late, duplicate, or reordered delivery cannot contradict it. Cancellation is not rollback, and partial effects are disclosed safely. | Proposed operation truthfulness and privacy principles. |
+| Candidate principle for owner acceptance now | Redelivery remains the same logical request even if its originating session is invalid; invalid session context cannot authorize a fresh mutation. Historical status may be returned only in a properly scoped, sanitized form or as `Indeterminate`, without exposing unrelated or prior-vault details. | N2 proposal; status lookup ordering and mechanism remain open, with no universal lookup-before-authorization rule. |
 | Conditional future principle requiring verification | Future Desktop operations use framework-independent core contracts and core capability readiness; the core validates live session, revision, authority, and exact mutation scope. | Requires implementation-specific security and behavior review when real capabilities are scoped. |
-| Conditional future principle requiring verification | Unlock attempts are fenced to a current selection; session references/generations are not reused in-process; stale completion cannot reactivate a closed or superseded context. | Future session/authentication design must validate lifecycle and sensitive-state handling. |
+| Conditional future principle requiring verification | Unlock attempts are fenced to a current selection; session references/generations are not reused in-process; stale completion cannot reactivate a closed or superseded context. A close requested during `Locking` is deferred until the lock reaches its safe boundary, then closes the locked selection. | Future session/authentication design must validate lifecycle and sensitive-state handling; no cancellation/reentrancy behavior is added. |
 | Conditional future principle requiring verification | Stale events cannot affect an active vault, while a completed mutation remains explainable through appropriately scoped, non-sensitive status when necessary. | Future UI and operation-record design must prevent cross-vault disclosure. |
 | Mechanism deferred to implementation milestones | Request-dedup retention window, ID representation, event transport/order and persistence, operation-record retention, exact commit points and recovery, concurrency implementation, key storage/zeroization, and outcome presentation/retention. | Deferred; no library, async framework, storage behavior, or security primitive is selected here. |
 
@@ -92,12 +93,12 @@ Phase 1B-3 is ready for architectural review when:
 
 1. The documents distinguish the declared-and-checked Cargo dependency from current API usage: the Desktop calls no core API and the shell does not consume readiness; no command/session behavior is implemented.
 2. Duplicate delivery refers to the original request, indeterminate outcomes are not treated as rejection, irreversible mutations are not automatically repeated, and a new rejection claims no effect only for that new request.
-3. Session/attempt fencing, non-reused in-process references/generations, illegal unlisted transitions, terminal-event rules, truthful cancellation/partial effects, and safe handling of completed mutations after lock/close are explicit.
+3. Session/attempt fencing, non-reused in-process references/generations, illegal unlisted transitions, deferred close during `Locking`, terminal-event rules, truthful cancellation/partial effects, and safe handling of completed mutations after lock/close are explicit.
 4. All contract principles are visibly proposed; the decision table separates owner-acceptance candidates, conditional future principles, and deferred mechanisms without claiming owner approval.
 5. Synthetic preview isolation and the package boundary remain unchanged and verified; requested local checks pass or their exact blocker is recorded, with no failed check represented as a pass.
 6. Claude independently reviews the corrected documents. The owner decides which proposed principles to accept before any implementation is scoped.
 
-Review questions include whether request deduplication is safe under lost acknowledgements, whether unlock attempts and session fencing prevent stale authentication, whether terminal and partial outcomes remain truthful, whether post-close mutation status is scoped without cross-vault disclosure, whether support identifiers reveal no sensitive source data, and whether implementation mechanisms remain properly deferred.
+Review questions include whether expired/unrecognized request identities remain non-executing when history is unavailable, whether status handling protects invalid-session/prior-vault information without imposing lookup ordering, whether unlock attempts and session fencing prevent stale authentication, whether close deferral during `Locking` is unambiguous, whether terminal and partial outcomes remain truthful, whether post-close mutation status is scoped without cross-vault disclosure, whether support identifiers reveal no sensitive source data, and whether implementation mechanisms remain properly deferred.
 
 ## 7. Open decisions and later handoff
 
