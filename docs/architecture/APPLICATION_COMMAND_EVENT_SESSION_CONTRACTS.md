@@ -1,10 +1,12 @@
 # Application Command, Event, and Session Contracts
 
-**Status:** PROPOSED — PENDING OWNER APPROVAL; independent review is READY FOR OWNER DISPOSITION
+**Status:** ARCHITECTURAL PRINCIPLES APPROVED by the owner on 2026-10-30; implementation mechanisms DEFERRED
 **Baseline:** `b7d134bf5e3a6778f3c89b03e63e659fa7b2e50d`
 **Scope:** Future contract between the native Desktop UI and `encryptdrive-core`; no production API is implemented or frozen here.
 
-This document defines a small contract for expressing user intent, checking it in the core, reporting operation outcomes, and fencing work against a changing session. Names in examples are conceptual. They are not Rust types, executable commands, or promises that vault operations exist.
+The independent review returned READY FOR OWNER DISPOSITION after confirming the original P1 and seven earlier P2 findings were resolved; its final N1–N3 wording observations were incorporated here. The owner approved the Phase 1B-3 architectural principles, including those safeguards, on 2026-10-30. Approval covers safety, privacy, request-identity, and lifecycle invariants only. It does not approve concrete event transport, identifier representation, deduplication retention, session implementation, concurrency mechanism, storage commit points, or VF1 behavior; it authorizes no production API or vault functionality. Names and flows below remain conceptual, not Rust types or executable commands.
+
+The Phase 1B-3 candidate passed hosted Windows CI on both branches: [dev run 41114552126](https://github.com/Fabianrodas/encryptdrive-desktop/actions/runs/41114552126) and [main run 41122244761](https://github.com/Fabianrodas/encryptdrive-desktop/actions/runs/41122244761). The original baseline CI record below is retained as historical evidence.
 
 ## 1. Verified implementation baseline
 
@@ -22,7 +24,7 @@ The stated main CI run, [40995708450](https://github.com/Fabianrodas/encryptdriv
 
 The established package boundary is recorded in [Phase 1A crate boundaries](PHASE_1A_CRATE_BOUNDARIES.md) and [ADR-012](ADR-012-EGUI-EFRAME-DESKTOP.md). The UX baseline is recorded in the [Phase 1A-UX closeout](../ux/design-studio/PHASE_1A_UX_CLOSEOUT.md).
 
-## 2. Proposed command boundary
+## 2. Approved boundary principles and illustrative command flow
 
 ```text
 future egui input
@@ -33,7 +35,7 @@ future egui input
   → correlated outcome/update returned to the Desktop
 ```
 
-This is a proposed future flow, not the current call graph: the Desktop presently declares the core dependency but does not call its API. When real product operations are separately implemented, the Desktop should express intent through GUI-independent core contracts and use core capability readiness; the core owns security enforcement. The Desktop gathers user choices, displays required confirmations, and may catch obvious input mistakes for immediate feedback. None of those UI actions authorizes an operation. The core must repeat all security-relevant validation against current state before any side effect.
+The boundary principles are approved, but this flow is illustrative and is not the current call graph: the Desktop presently declares the core dependency but does not call its API. When real product operations are separately authorized and implemented, the Desktop should express intent through GUI-independent core contracts and use core capability readiness; the core owns security enforcement. The Desktop gathers user choices, displays required confirmations, and may catch obvious input mistakes for immediate feedback. None of those UI actions authorizes an operation. The core must repeat all security-relevant validation against current state before any side effect.
 
 The future request boundary should preserve these rules:
 
@@ -41,7 +43,7 @@ The future request boundary should preserve these rules:
 - Session context is opaque and issued/validated by the core. A UI-provided vault, account, entry, or parent identifier is a selector to validate, never proof of ownership or permission.
 - Requests that can mutate data must revalidate capability, live session, permissions, target identity, name/conflict rules, and the exact operation scope immediately before the first side effect. Destructive confirmations must describe that same scope. A stale plan is rejected and must be shown again for confirmation.
 - A repeated delivery of an existing request identity refers to the original logical request. Return its known acceptance, operation identity, current status, or terminal outcome; do not create a new request result that contradicts it. If the original outcome cannot be established, report it as `Indeterminate`, not as a rejection claiming no effect. Never automatically repeat an irreversible mutation solely because its acknowledgement was lost.
-- If an identity is no longer recognized because deduplication history expired, or its validity/history cannot otherwise be established, do not infer that it names a new user intent or authorize a destructive mutation from it. Return `Indeterminate` or another safely non-executing status. Target-state revalidation alone does not prove replay is harmless. A new intent may be admitted only with a fresh identity and current authorization/precondition checks.
+- **Approved safeguard N1:** If an identity is no longer recognized because deduplication history expired, or its validity/history cannot otherwise be established, do not infer that it names a new user intent or authorize a destructive mutation from it. Return `Indeterminate` or another safely non-executing status. Target-state revalidation alone does not prove replay is harmless. A new intent may be admitted only with a fresh identity and current authorization/precondition checks.
 - `Rejected` applies to a new request refused before it starts and means only that this request caused no side effect. It makes no claim about earlier accepted requests. It is not the response for a duplicate whose original operation might have run.
 - A fresh independent request, including a separate user activation, has a distinct identity. Conflicting mutations from independent requests require current-state/revision revalidation and core-side per-session or per-target arbitration before effects.
 - Request-identity deduplication is for redelivery/retry of the same logical request. It does not promise permanent exactly-once execution or unlimited history; the concrete retention window is deferred to implementation.
@@ -60,9 +62,9 @@ These examples show responsibility and ordering only. They are not implemented A
 | Request session locking | The core stops admitting work for that session, reaches operation-safe boundaries, invalidates the session generation, and reports the locked state only after invalidation. A lock action does not promise rollback of already committed work. |
 | Request restore from Trash | The core rechecks each selected item, session, destination, and name conflict before changing state. A multi-item result must expose partial completion if some roots succeed and a later root fails; the UI must not report all-or-nothing success unless the implementation provides it. |
 
-## 3. Proposed outcomes and events
+## 3. Approved outcome principles and illustrative event categories
 
-Prefer an immediate request reply for acceptance or rejection, plus correlated updates only for accepted operations that outlive the call. A repeated delivery refers to that original reply/status; it is not a new acceptance or rejection. `Indeterminate` records that the original outcome cannot currently be established and does not assert whether an effect occurred. This keeps the contract understandable without committing to a framework or event-bus implementation.
+The outcome meanings and safety invariants below are approved principles. An immediate request reply plus correlated updates is only an illustrative shape; it does not approve a transport, public types, or event-bus implementation. A repeated delivery refers to its original reply/status; it is not a new acceptance or rejection. `Indeterminate` records that the original outcome cannot currently be established and does not assert whether an effect occurred.
 
 | Reply, event, or status | Meaning | Correlation |
 |---|---|---|
@@ -84,13 +86,13 @@ Rejection is normally a reply rather than a later event: the UI must distinguish
 - Session references and generation identities are core-issued and must not be reused within a running process. A new vault selection or session generation cannot accidentally match an invalidated one. Concrete representation is deferred; no distributed identity service or persistence requirement is imposed here.
 - The core rejects commands against an invalid generation. The UI must not apply a result from an old request, operation, session, or unlock attempt to active vault/session state; it may preserve the original operation's safe status separately under the policy below. UI filtering supplements but never replaces core enforcement.
 - Stale events cannot modify the active vault/session state. A late completion cannot restore an unlocked view, repopulate cleared private UI state, or be applied to another session. A completed mutating operation must not be silently presented as if it never occurred: preserve or surface a suitably scoped, non-sensitive outcome when needed for user understanding or recovery. A status shown after close or switch must not expose information from the previous vault in an unrelated active context; a safe outcome category and count may be sufficient, without paths or file names. Presentation and retention policy remain deferred.
-- Request identity tracks the logical request independently of session validity: redelivery does not become a new operation merely because its originating session is invalid. An invalid session cannot authorize a fresh mutation. Historical-status handling must apply appropriate scope and privacy protections; no universal lookup-before-authorization order is prescribed. The core may return a properly authorized, sanitized known result or `Indeterminate`, without disclosing sensitive prior-vault information. A stale request cannot reactivate its old session or expose another vault's details.
+- **Approved safeguard N2:** Request identity tracks the logical request independently of session validity: redelivery does not become a new operation merely because its originating session is invalid. An invalid session cannot authorize a fresh mutation. Historical-status handling must apply appropriate scope and privacy protections; no universal lookup-before-authorization order is prescribed. The core may return a properly authorized, sanitized known result or `Indeterminate`, without disclosing sensitive prior-vault information. A stale request cannot reactivate its old session or expose another vault's details.
 - A terminal outcome is definitive for that operation; later or reordered delivery cannot replace it. Unknown status remains explicitly indeterminate until safely resolved and is not a license to replay an irreversible action.
 - Ordering/delivery guarantees beyond these invariants, persistence of request identities across process restart, operation-record retention, and the concrete request-deduplication retention window remain open implementation decisions. No permanent or unlimited deduplication guarantee is made.
 
 ## 4. Conceptual session lifecycle
 
-These states are a proposed future domain lifecycle, not current product functionality or a key-management design. The table is exhaustive for this proposal: transitions not listed are illegal and must be rejected without changing state.
+The lifecycle principles and transition constraints are approved, but these states are a conceptual future domain lifecycle, not current product functionality or a key-management design. The table is exhaustive for this model: transitions not listed are illegal and must be rejected without changing state. Concrete session implementation remains deferred.
 
 | Current state | Request/condition | Next state | Required rule |
 |---|---|---|---|
@@ -106,7 +108,7 @@ These states are a proposed future domain lifecycle, not current product functio
 | Locking | Current locking transition reaches its safe boundary; session material and authorization are invalidated | Vault selected, locked | Clear session-derived UI state before presenting the locked state. Any new session must use a fresh identity/generation. |
 | Vault selected, locked | Close, including a close request deferred during Locking | No vault selected | Invalidate the selection identity and preserve any necessary operation outcome separately from active-vault state. |
 
-A close requested while `Locking` is deferred until that locking transition reaches its safe boundary. It then follows the listed close transition from `Vault selected, locked` to `No vault selected`. The proposal does not cancel or restart locking, and does not add a concurrent close transition.
+Under approved safeguard N3, a close requested while `Locking` is deferred until that locking transition reaches its safe boundary. It then follows the listed close transition from `Vault selected, locked` to `No vault selected`. This does not cancel or restart locking, and does not add a concurrent close transition.
 
 Every unlock attempt is fenced before a successful authenticated session exists. A completion whose attempt/selection preconditions no longer hold cannot create or reactivate a session. Sensitive derived material from an invalidated attempt must no longer be usable to authorize operations or become available through a subsequently created session. This is a future security contract, not a claim about current behavior; it does not select key-storage or memory-management primitives.
 
@@ -116,7 +118,7 @@ The core owns session validity and any future sensitive state. The UI may retain
 
 ## 5. Cancellation and concurrency
 
-| Boundary | Proposed behavior |
+| Boundary | Approved principle; concrete behavior remains operation-specific |
 |---|---|
 | Before acceptance | Reject a new request before it starts; no side effect is attributable to that request. This does not make claims about other requests. |
 | Accepted but not started | Core may confirm cancellation; no side effect may begin afterward. |
@@ -145,7 +147,7 @@ The future core should return stable categories, not raw platform error strings 
 | Partial completion | State safely what category/count completed and what remains, without implying rollback. | Per-target diagnostic IDs only if the owner-approved privacy policy permits them. |
 | Unexpected internal failure | Generic message with a non-sensitive support/correlation identifier. | Sanitized error category and redacted source chain; no automatic raw-chain dump. |
 
-Ordinary logs, UI notifications, and crash reports must never contain passwords, derived keys, authentication secrets, raw file contents, or decrypted metadata. Full filesystem paths, vault IDs, account/user IDs, and filenames are sensitive by default: show only when the active product workflow requires it, and redact them from diagnostics unless a reviewed policy explicitly permits a narrowly scoped value. Error chains must be sanitized before logging; a lower-layer source error is not automatically safe. This is a proposed contract, not a claim about current logging, which has no production vault operations to exercise.
+Approved privacy principles prohibit passwords, derived keys, authentication secrets, raw file contents, or decrypted metadata in ordinary logs, UI notifications, and crash reports. Full filesystem paths, vault IDs, account/user IDs, and filenames are sensitive by default: show only when the active product workflow requires it, and redact them from diagnostics unless a reviewed policy explicitly permits a narrowly scoped value. Error chains must be sanitized before logging; a lower-layer source error is not automatically safe. These are not claims about current logging, which has no production vault operations to exercise.
 
 ## 7. Contract invariants
 
@@ -153,24 +155,24 @@ Ordinary logs, UI notifications, and crash reports must never contain passwords,
 |---|---|
 | The Desktop declares a direct Cargo dependency on `encryptdrive-core`; the validator checks package membership and dependency direction, not API call sites. | Existing verified boundary. |
 | The Desktop currently calls no `encryptdrive-core` API and does not consume `readiness()`; no production command, event, or session behavior exists. | Verified current implementation. |
-| Future Desktop application behavior uses framework-independent contracts through `encryptdrive-core`; lower crates remain independent of egui widgets and presentation state. | Proposed future boundary; implementation must be validated. |
-| UX action or confirmation is not authorization to mutate a vault. | Proposed contract. |
-| Future UI capability presentation reflects core readiness after real operations are separately implemented. | Proposed; current shell does not consume readiness. |
-| A command cannot execute against a missing, locked, expired, or stale session. | Proposed contract; enforce in core before side effects. |
-| A repeated delivery of the same request identity refers to its original status; unknown outcome stays indeterminate and is never treated as a new no-effect rejection. | Proposed contract; dedup retention is deferred. |
-| Distinct user intents receive distinct identities; conflicting mutations revalidate revisions and are arbitrated per session or target. | Proposed contract; operation details are deferred. |
-| Unlock attempts and session generations are fenced and never reused within one process; stale completions cannot reactivate a closed or superseded context. | Proposed future contract; identity representation and memory handling are deferred. |
-| Terminal outcomes end operations; late, duplicate, or reordered events cannot contradict them. | Proposed contract; transport/delivery mechanism is deferred. |
-| A stale completion cannot alter active session state, and a completed mutation is not silently presented as if it never occurred. | Proposed contract; safe status presentation and retention are deferred. |
-| Destructive scope is revalidated and matches the confirmation before any side effect. | Proposed contract; persistence/transaction mechanism deferred. |
+| Future Desktop application behavior uses framework-independent contracts through `encryptdrive-core`; lower crates remain independent of egui widgets and presentation state. | Approved boundary principle; APIs and implementation must be separately scoped and validated. |
+| UX action or confirmation is not authorization to mutate a vault. | Approved safety principle. |
+| Future UI capability presentation reflects core readiness after real operations are separately implemented. | Approved principle; current shell does not consume readiness. |
+| A command cannot execute against a missing, locked, expired, or stale session. | Approved safety principle; enforce in core before side effects. |
+| A repeated delivery of the same request identity refers to its original status; unknown outcome stays indeterminate and is never treated as a new no-effect rejection. | Approved safety principle; dedup retention is deferred. |
+| Distinct user intents receive distinct identities; conflicting mutations revalidate revisions and are arbitrated per session or target. | Approved principle; operation details are deferred. |
+| Unlock attempts and session generations are fenced and never reused within one process; stale completions cannot reactivate a closed or superseded context. | Approved lifecycle principle; identity representation and memory handling are deferred. |
+| Terminal outcomes end operations; late, duplicate, or reordered events cannot contradict them. | Approved outcome principle; transport/delivery mechanism is deferred. |
+| A stale completion cannot alter active session state, and a completed mutation is not silently presented as if it never occurred. | Approved safety/privacy principle; safe status presentation and retention are deferred. |
+| Destructive scope is revalidated and matches the confirmation before any side effect. | Approved safety principle; persistence/transaction mechanism is deferred. |
 | Synthetic preview state and commands cannot reach production storage or real vault operations. | Existing feature/source boundary; preserve and test. |
-| Cancellation is not rollback; partial effects are disclosed safely, and a committed mutation is not described as cancelled without effect. | Proposed contract; commit points/recovery are deferred. |
-| Identifiers exposed in logs/support are opaque, non-sensitive, unique within scope, independently generated, and never authorization credentials. | Proposed contract; no format/library is selected. |
-| Errors are never silently converted into success or optimistic completion. | Proposed contract. |
-| User-visible diagnostics and ordinary logs contain no secret material or raw file data. | Proposed contract; logging implementation and review remain future work. |
+| Cancellation is not rollback; partial effects are disclosed safely, and a committed mutation is not described as cancelled without effect. | Approved outcome principle; commit points/recovery are deferred. |
+| Identifiers exposed in logs/support are opaque, non-sensitive, unique within scope, independently generated, and never authorization credentials. | Approved privacy principle; no format/library is selected. |
+| Errors are never silently converted into success or optimistic completion. | Approved outcome principle. |
+| User-visible diagnostics and ordinary logs contain no secret material or raw file data. | Approved privacy principle; logging implementation and review remain future work. |
 | Persistent format and conformance rules are independent of UI framework and design. | Existing architecture direction; no format API is implemented here. |
 
-## 8. Open decisions for review
+## 8. Deferred implementation decisions
 
 1. What exact core-owned session reference and generation model will later APIs use, and how are generations invalidated across close, lock, account switch, and expiry?
 2. What bounded in-process request-deduplication window is appropriate, which operation classes need request/operation identity retention across restart, and how should an indeterminate outcome be safely resolved after interruption?
@@ -183,7 +185,7 @@ Ordinary logs, UI notifications, and crash reports must never contain passwords,
 9. Are capability availability changes static per build or dynamic per selected session, and what user-visible transition should accompany a change?
 10. Which Java behaviors are compatibility requirements for each future command, and which require a separate approved product decision? The Java reference is evidence for behavior, not a Rust runtime/API design mandate.
 
-Resolve these questions in the phase that implements the affected capability. Do not create empty interfaces, choose cryptographic/session primitives, or freeze a generalized public API just to close this contract milestone.
+Resolve these questions in the separately authorized phase that implements the affected capability. The principles are approved; these mechanisms and capability-specific choices remain open. Do not create empty interfaces, choose cryptographic/session primitives, or freeze a generalized public API just to close this contract milestone.
 
 ## 9. Future implementation examples
 
@@ -195,6 +197,6 @@ Once separately authorized, a concrete command can follow this shape without imp
 4. Core rejects only a new request before that request has side effects, or accepts it with a correlated operation identity. A repeated delivery refers to the original status; if that status is unknowable, return `Indeterminate` and do not automatically repeat an irreversible mutation.
 5. For accepted work, core emits truthful progress and one terminal completion/cancellation/failure result. The UI applies only results still matching the current request and session generation.
 
-The specific payloads, validation rules, commit points, and event transport belong to future operation designs. A later CLI or other client may reuse a GUI-independent core boundary only after separate scope, compatibility, privacy, and release approval; this document does not authorize another client.
+The specific payloads, validation rules, commit points, and event transport belong to future operation designs and are not approved by the principle-level decision. A later CLI or other client may reuse a GUI-independent core boundary only after separate scope, compatibility, privacy, and release approval; this document does not authorize another client.
 
 See the [Phase 1B-3 milestone record](../roadmap/PHASE_1B_APPLICATION_CONTRACTS.md) for review gates and handoff.
