@@ -1,7 +1,7 @@
 # Phase 1B-4 — Production Shell and Synthetic Preview Isolation
 
 **Status:** Local implementation candidate on `dev`; hosted CI and interactive Windows validation are pending.
-**Source revision for Release artifacts:** `4f3187d145a68867aba6b174ce28f9b7dfd5bedc` (`dirty=false`)
+**Source revision for Release artifacts:** `a2ea3de88e89298369b0790b026be10f560ef752` (`dirty=false`)
 **Validation date:** 2026-11-01
 **Scope:** Automated source/feature isolation checks, two isolated Windows Release builds, and a repeatable owner-run smoke protocol. No real vault behavior is implemented.
 
@@ -27,10 +27,10 @@ Both Release variants were built with the existing PowerShell 7 driver into isol
 
 | Variant | Features in verified manifest | Release EXE | Size | Raw SHA-256 |
 |---|---|---|---:|---|
-| Production shell | `[]` | `target/phase-1b/artifacts/phase1b4-20261101-01/shell/EncryptDrive-shell-4f3187d145a6-phase1b4-20261101-01.exe` | 14,875,648 bytes | `C94A2624E86B42D12AF191421EDB16AD795A8C3219E6D6B94A4DC81CA160F265` |
-| Synthetic design preview | `["design-preview"]` | `target/phase-1b/artifacts/phase1b4-20261101-01/design-preview/EncryptDrive-design-preview-4f3187d145a6-phase1b4-20261101-01.exe` | 15,534,592 bytes | `3C766B0031789C16C1CDF86539648CBD77FB38F6631E4C1393692E2BDCBBBED0` |
+| Production shell | `[]` | `target/phase-1b/artifacts/phase1b4-20261101-02/shell/EncryptDrive-shell-a2ea3de88e89-phase1b4-20261101-02.exe` | 14,875,648 bytes | `378651CE7B8CECD18694335C620245F7D60D0F6AD99BDEAA5A914D51A55236D7` |
+| Synthetic design preview | `["design-preview"]` | `target/phase-1b/artifacts/phase1b4-20261101-02/design-preview/EncryptDrive-design-preview-a2ea3de88e89-phase1b4-20261101-02.exe` | 15,534,592 bytes | `2DF126C0A601F4C294B53323D886FB33686BF92128639E8F2A74CD38DAE1266F` |
 
-These are raw SHA-256 hashes of the Release executables, not normalized hashes. The manifest source identity is the clean code/test/CI commit immediately before this evidence-only document commit; no executable-affecting source changed afterward.
+These are raw SHA-256 hashes of the Release executables, not normalized hashes. The manifest source identity is the exact clean candidate revision used for the builds; only this report's artifact-evidence rows changed in the following documentation commit, with no executable-affecting source changes afterward.
 
 | Build input | Observed value |
 |---|---|
@@ -40,7 +40,7 @@ These are raw SHA-256 hashes of the Release executables, not normalized hashes. 
 | PowerShell | `7.6.5` |
 | Cargo.lock SHA-256 | `3CB09A9815F937F30137C3B9169F33834B1412CEAD428406613A65C99A64D754` |
 | Linker probe | `link.exe (MSVC linker) 14.51.36260.0` detected; actual linker invocation is not independently proven by the manifest |
-| Build source | `4f3187d145a68867aba6b174ce28f9b7dfd5bedc`, clean |
+| Build source | `a2ea3de88e89298369b0790b026be10f560ef752`, clean |
 | Native imports | 27 observed for each executable using `dumpbin /DEPENDENTS`; this is a static import view, not runtime `LoadLibrary` tracing |
 
 The local Windows registry reports ProductName `Windows 10 Pro`, DisplayVersion `25H2`, and build `26200.9711`. CIM queries were unavailable in this agent environment, so GPU model/driver could not be collected. The per-monitor registry value was `DpiValue=0`; its effective scaling was not established. No visual scale is inferred from that registry value.
@@ -197,7 +197,7 @@ Review the local commits on `dev` and verify:
 1. `scripts/ShellIsolation.psm1` scans the preview, UI, and root application Rust modules; its negative cases cover direct and common aliased imports, including grouped imports. It does not claim to be a complete Rust parser or runtime security boundary; the Windows font-read exception is limited to three fixed basenames under Fonts.
 2. The source checker, default/preview Release manifest features, and existing architecture validator jointly support the isolation claims; `cfg(test)` preview compilation is described correctly.
 3. The recorded shell behavior matches the source and does not treat Trash navigation as a real Trash operation or the core dependency declaration as readiness API usage.
-4. The raw executable hashes match the ignored local files under `target/phase-1b/artifacts/phase1b4-20261101-01/`; the report distinguishes them from normalized hashes and names the exact build revision.
+4. The raw executable hashes match the ignored local files under `target/phase-1b/artifacts/phase1b4-20261101-02/`; the report distinguishes them from normalized hashes and names the exact build revision.
 5. The report marks hosted CI and every live GUI/accessibility/display/offline check as NOT RUN rather than implying source/tests prove runtime behavior.
 6. No executable, manifest, build log, user data, or private material is tracked.
 
