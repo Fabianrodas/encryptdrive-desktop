@@ -35,7 +35,7 @@ $defaultPreview.DesktopManifest = $defaultPreview.DesktopManifest.Replace('defau
 Assert-Rejected { Assert-ShellPreviewIsolation -Source $defaultPreview } 'preview enabled by default' 'default features empty'
 
 $unguardedUi = Copy-IsolationSnapshot $source
-$unguardedUi.MainSource = $unguardedUi.MainSource.Replace('#[cfg(feature = "design-preview")]' + [Environment]::NewLine + 'mod ui;', 'mod ui;')
+$unguardedUi.MainSource = [regex]::Replace($unguardedUi.MainSource, '(?s)#\[cfg\(feature = "design-preview"\)\]\s*mod ui;', 'mod ui;')
 Assert-Rejected { Assert-ShellPreviewIsolation -Source $unguardedUi } 'UI module compiled without design-preview' 'feature-gated'
 
 $fileIo = Copy-IsolationSnapshot $source
@@ -47,6 +47,24 @@ $fileIo.PreviewSources = @($fileIo.PreviewSources | ForEach-Object {
 })
 Assert-Rejected { Assert-ShellPreviewIsolation -Source $fileIo } 'preview file I/O' 'forbidden runtime side-effect'
 
+$groupedFileAlias = Copy-IsolationSnapshot $source
+$groupedFileAlias.PreviewSources = @($groupedFileAlias.PreviewSources | ForEach-Object {
+    if ($_.Path.EndsWith('model.rs', [StringComparison]::OrdinalIgnoreCase)) {
+        [pscustomobject]@{ Path = $_.Path; Content = $_.Content + "`nuse std::{fs as fs};`nfs::write`n" }
+    }
+    else { $_ }
+})
+Assert-Rejected { Assert-ShellPreviewIsolation -Source $groupedFileAlias } 'grouped aliased preview file I/O' 'forbidden runtime side-effect'
+
+$aliasedUiFileIo = Copy-IsolationSnapshot $source
+$aliasedUiFileIo.UiSources = @($aliasedUiFileIo.UiSources | ForEach-Object {
+    if ($_.Path.EndsWith('app.rs', [StringComparison]::OrdinalIgnoreCase)) {
+        [pscustomobject]@{ Path = $_.Path; Content = $_.Content + "`nuse std::fs as fs;`nfs::write`n" }
+    }
+    else { $_ }
+})
+Assert-Rejected { Assert-ShellPreviewIsolation -Source $aliasedUiFileIo } 'aliased preview UI file I/O' 'forbidden runtime side-effect'
+
 $coreCall = Copy-IsolationSnapshot $source
 $coreCall.UiSources = @($coreCall.UiSources | ForEach-Object {
     if ($_.Path.EndsWith('app.rs', [StringComparison]::OrdinalIgnoreCase)) {
@@ -55,6 +73,36 @@ $coreCall.UiSources = @($coreCall.UiSources | ForEach-Object {
     else { $_ }
 })
 Assert-Rejected { Assert-ShellPreviewIsolation -Source $coreCall } 'preview core capability call' 'forbidden runtime side-effect'
+
+$aliasedCoreCall = Copy-IsolationSnapshot $source
+$aliasedCoreCall.UiSources = @($aliasedCoreCall.UiSources | ForEach-Object {
+    if ($_.Path.EndsWith('app.rs', [StringComparison]::OrdinalIgnoreCase)) {
+        [pscustomobject]@{ Path = $_.Path; Content = $_.Content + "`nuse encryptdrive_core as core;`ncore::readiness`n" }
+    }
+    else { $_ }
+})
+Assert-Rejected { Assert-ShellPreviewIsolation -Source $aliasedCoreCall } 'aliased preview core call' 'forbidden runtime side-effect'
+
+$rootPreviewIo = Copy-IsolationSnapshot $source
+$rootPreviewIo.PreviewCatalog = $rootPreviewIo.PreviewCatalog + "`nstd::fs::write`n"
+Assert-Rejected { Assert-ShellPreviewIsolation -Source $rootPreviewIo } 'preview catalog file I/O' 'forbidden runtime side-effect'
+
+$aliasedMainCore = Copy-IsolationSnapshot $source
+$aliasedMainCore.MainSource = $aliasedMainCore.MainSource + "`nuse encryptdrive_core as core;`ncore::readiness`n"
+Assert-Rejected { Assert-ShellPreviewIsolation -Source $aliasedMainCore } 'aliased core call in application entry source' 'forbidden runtime side-effect'
+
+$shellFileIo = Copy-IsolationSnapshot $source
+$shellFileIo.ShellSource = $shellFileIo.ShellSource + "`nstd::fs::read`n"
+Assert-Rejected { Assert-ShellPreviewIsolation -Source $shellFileIo } 'production shell file I/O' 'forbidden runtime side-effect'
+
+$unsafeFontPath = Copy-IsolationSnapshot $source
+$unsafeFontPath.UiSources = @($unsafeFontPath.UiSources | ForEach-Object {
+    if ($_.Path.EndsWith([IO.Path]::Combine('ui', 'icons.rs'), [StringComparison]::OrdinalIgnoreCase)) {
+        [pscustomobject]@{ Path = $_.Path; Content = $_.Content.Replace('"segoeui.ttf"', '"../secret.txt"') }
+    }
+    else { $_ }
+})
+Assert-Rejected { Assert-ShellPreviewIsolation -Source $unsafeFontPath } 'unbounded system-font path' 'three approved system-font names'
 
 $syntheticShell = Copy-IsolationSnapshot $source
 $syntheticShell.ShellSource = $syntheticShell.ShellSource + "`nlet _fixture = PreviewModel::fixture(DatasetSize::OneHundred);`n"

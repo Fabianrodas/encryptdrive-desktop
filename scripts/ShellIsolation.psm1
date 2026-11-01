@@ -98,14 +98,21 @@ function Assert-ShellPreviewIsolation {
     if (@($Source.PreviewSources).Count -eq 0 -or @($Source.UiSources).Count -eq 0) {
         throw 'Preview and UI source trees cannot be empty.'
     }
-    $previewIoPattern = '(?i)\buse\s+(?:std::)?(?:fs|net|process|path)\b|\bstd::(?:fs|net|process|path)\s*::|\b(?:File|OpenOptions)\s*::\s*(?:open|create|new)\s*\(|\b(?:TcpStream|UdpSocket|Command)\s*::\s*new\s*\(|\b(?:encryptdrive_core|vault_format|vault_crypto|vault_storage)\s*::'
-    foreach ($file in @($Source.PreviewSources)) {
+    $forbiddenImportPattern = '(?i)\buse\s+(?:::)?(?:std::)?(?:fs|net|process|path)\b|\buse\s+(?:::)?(?:std::)?\{[^}]*\b(?:fs|net|process|path)\b|\buse\s+\{[^}]*\b(?:::)?std::(?:fs|net|process|path)\b|\buse\s+(?:::)?(?:encryptdrive_core|vault_format|vault_crypto|vault_storage)\b|\buse\s+\{[^}]*\b(?:encryptdrive_core|vault_format|vault_crypto|vault_storage)\b'
+    $previewIoPattern = $forbiddenImportPattern + '|\bstd::(?:fs|net|process|path)\s*::|\b(?:File|OpenOptions)\s*::\s*(?:open|create|new)\s*\(|\b(?:TcpStream|UdpSocket|Command)\s*::\s*new\s*\(|\b(?:encryptdrive_core|vault_format|vault_crypto|vault_storage)\s*::'
+    $rootSources = @(
+        [pscustomobject]@{ Path = 'apps/encryptdrive-desktop/src/lib.rs'; Content = [string]$Source.LibrarySource },
+        [pscustomobject]@{ Path = 'apps/encryptdrive-desktop/src/main.rs'; Content = [string]$Source.MainSource },
+        [pscustomobject]@{ Path = 'apps/encryptdrive-desktop/src/shell.rs'; Content = [string]$Source.ShellSource },
+        [pscustomobject]@{ Path = 'apps/encryptdrive-desktop/src/preview.rs'; Content = [string]$Source.PreviewCatalog }
+    )
+    foreach ($file in (@($Source.PreviewSources) + $rootSources)) {
         if ([string]$file.Content -match $previewIoPattern) {
-            throw "Synthetic model source contains a forbidden runtime side-effect or production-crate reference: '$($file.Path)'."
+            throw "Preview or application entry source contains a forbidden runtime side-effect or production-crate reference: '$($file.Path)'."
         }
     }
 
-    $uiForbiddenPattern = '(?i)\buse\s+(?:std::)?(?:net|process)\b|\bstd::(?:net|process)\s*::|\b(?:TcpStream|UdpSocket|Command)\s*::\s*new\s*\(|\b(?:encryptdrive_core|vault_format|vault_crypto|vault_storage)\s*::|\b(?:File|OpenOptions)\s*::\s*(?:open|create|new)\s*\(|\bstd::fs\s*::\s*(?:write|remove|rename|create_dir|copy|OpenOptions)\b'
+    $uiForbiddenPattern = $forbiddenImportPattern + '|\bstd::(?:net|process)\s*::|\b(?:TcpStream|UdpSocket|Command)\s*::\s*new\s*\(|\b(?:encryptdrive_core|vault_format|vault_crypto|vault_storage)\s*::|\b(?:File|OpenOptions)\s*::\s*(?:open|create|new)\s*\(|\bstd::fs\s*::\s*(?:write|remove|rename|create_dir|copy|OpenOptions)\b'
     foreach ($file in @($Source.UiSources)) {
         if ([string]$file.Content -match $uiForbiddenPattern) {
             throw "Preview-only UI contains a forbidden runtime side-effect or production-crate reference: '$($file.Path)'."
@@ -115,6 +122,13 @@ function Assert-ShellPreviewIsolation {
             if ($fontReads.Count -ne 1 -or $fontReads[0].Groups[1].Value -cne 'read' -or
                 [string]$file.Content -notmatch '(?s)std::env::var_os\("WINDIR"\).*?PathBuf::from\(windows_directory\)\.join\("Fonts"\).*?std::fs::read\(fonts_directory\.join\(filename\)\)') {
                 throw "The only allowed UI file read is the bounded Windows system-font load in '$($file.Path)'."
+            }
+            $fontCalls = [regex]::Matches([string]$file.Content, '(?s)load_system_font\s*\(\s*definitions\s*,\s*&fonts_directory\s*,\s*"([^"]+)"')
+            $fontNames = @($fontCalls | ForEach-Object { $_.Groups[1].Value } | Sort-Object)
+            $expectedFontNames = @('segoeui.ttf', 'seguisb.ttf', 'segoeuib.ttf') | Sort-Object
+            $fontFunctionCount = [regex]::Matches([string]$file.Content, '\bload_system_font\s*\(').Count
+            if ($fontCalls.Count -ne 3 -or ($fontNames -join '|') -cne ($expectedFontNames -join '|') -or $fontFunctionCount -ne 4) {
+                throw "The Windows font loader must use only the three approved system-font names: '$($file.Path)'."
             }
         }
         elseif ([string]$file.Content -match '(?i)\bstd::(?:fs|path)\s*::') {
