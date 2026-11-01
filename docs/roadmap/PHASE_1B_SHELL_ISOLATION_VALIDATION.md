@@ -11,11 +11,33 @@ The production shell starts with `ShellState::new()`: Files selected, System app
 
 The Desktop manifest declares `encryptdrive-core`, but the production shell does not call `readiness()` or another core API. This distinction is checked by source inspection and the isolation gate; the existing architecture validator checks the package dependency boundary, not API call sites.
 
-The `design-preview` Cargo feature is empty and opt-in. `main.rs` includes the synthetic UI and preview entry point only behind that feature. `lib.rs` also includes the preview model under `cfg(test)` so unit tests can compile it in a default test build; that test-only compilation is not production release enablement. Preview fixtures and operations are in-memory. Static source checks cover `src/preview/**/*.rs`, `src/ui/**/*.rs`, and the application entry, shell, and root preview modules. They reject direct runtime file, network, process, core, and lower-vault crate access, along with common Rust `use` import and alias forms. The only allowed UI filesystem read is the existing read-only load of the three fixed Segoe UI filenames from the Windows Fonts directory; a path outside that allowlist is rejected.
+The `design-preview` Cargo feature is empty and opt-in. `main.rs` declares the preview-only UI module tree (`ui/mod.rs`: app, dialogs, explorer, navigation, screens) and the preview entry point only behind that feature. `src/ui/` is **not** preview-only as a whole: the ungated `design.rs` module uses `#[path]` to compile seven shared files — `ui/components.rs`, `ui/copy.rs`, `ui/geometry.rs`, `ui/icons.rs`, `ui/theme.rs`, `ui/typography.rs`, and `ui/work_area.rs` — into the production shell binary as well as the preview binary. `lib.rs` also includes the preview model under `cfg(test)` so unit tests can compile it in a default test build; that test-only compilation is not production release enablement. Preview fixtures and operations are in-memory.
 
-The source gate also verifies that the preview catalog lists all 22 scenarios and requires explicit design-preview/synthetic-data wording. It is a targeted regression check, not a complete Rust parser or a security boundary; new APIs or syntax outside its direct/common-import patterns still need code review. Production isolation is supported by the combined source/feature check, the unchanged architecture boundary check, and the separately verified Release manifest feature fingerprints; absence of a string in an EXE is not used as proof.
+Both executables call `design::icons::install_font` at startup. It reads exactly three files, `segoeui.ttf`, `seguisb.ttf`, and `segoeuib.ttf`, from `%WINDIR%\Fonts` with one read-only `std::fs::read`, and falls back to the bundled fonts if they are unavailable. This is the only filesystem read the source gate permits; `ui/work_area.rs` additionally contains an `#[allow(unsafe_code)]` FFI module that calls `user32`/`shcore` for monitor work-area and DPI queries.
 
-**Independent-review follow-up (2026-11-01):** Review found that the original scan omitted root application modules, could miss grouped or aliased imports, and did not constrain the Windows font loader to fixed filenames. Commit `cf56640` adds root entry/shell/preview sources, rejects direct and common grouped/aliased imports in the scanned scopes, and restricts the font exception to exactly `segoeui.ttf`, `seguisb.ttf`, and `segoeuib.ttf`. Thirteen mutation cases now exercise these gaps along with the original boundary checks. The checker remains a targeted regression guard, not a full Rust parser or security boundary.
+**Source gate design.** `scripts/ShellIsolation.psm1` enumerates every `*.rs` file under `apps/encryptdrive-desktop/src` recursively and fails closed if the tree, the Desktop manifest, or any of `lib.rs`, `main.rs`, `shell.rs`, `design.rs`, `preview.rs` is missing, if no Rust files are found, if a file cannot be read, or if the tree contains any reparse point (symlink or junction). The snapshot is the manifest plus a list of `{RelativePath, Content}` entries, so tests can mutate any file or add a new one. Two policy classes apply:
+
+- **UI policy** — every file under `ui/` (shared production design files and preview-only modules). `std::net`, `std::process` and `std::os` are forbidden everywhere; `std::fs` and `std::path` are allowed only in `ui/icons.rs`, and there only as the single bounded font read described above with exactly the three approved filenames.
+- **Strict policy** — every other file: root files including `design.rs`, `lib.rs`, `main.rs`, `shell.rs`, `preview.rs`, everything under `preview/`, and any new file anywhere in the tree. Any `std::fs`, `std::net`, `std::process`, `std::path` or `std::os` reference is forbidden.
+
+Under both policies the gate blanks comments and literals, extracts every complete `use` statement (including `pub`/`pub(crate)`, multiline, and leading `::` forms) and expands its use-tree — nested braces, `self`, `as` aliases and globs — into flat paths. It rejects imports of the forbidden `std` modules, of the production crates (`encryptdrive_core`, `vault_format`, `vault_crypto`, `vault_storage`), and of the `std` root itself (`use std as s;`, `use std::{self as s};`, `use std::*;`). Backstops reject fully qualified `std::` module paths (tolerating whitespace and comments between segments), real network/process/file constructors (`TcpStream::connect`, `TcpStream::connect_timeout`, `TcpListener::bind`, `UdpSocket::bind`, `Command::new`, `File::open`/`create`/`create_new`/`options`, `OpenOptions::new`), and any production-crate name. Every `#[path = "..."]` literal is resolved relative to the declaring file; absolute paths, resolutions outside `apps/encryptdrive-desktop/src`, non-literal path attributes, and targets that are not scanned `.rs` files are rejected. `include!` and `extern crate` are rejected; `include_bytes!`/`include_str!` remain allowed for compile-time assets.
+
+The source gate also keeps the earlier semantic checks: empty default features, an explicit empty `design-preview` feature, the preview gate in `lib.rs`, the `ui` and `run_preview` gates and default `main` in `main.rs`, the production shell restrictions, all 22 preview scenarios, and explicit design-preview/synthetic-data wording. It is a targeted regression check, not a complete Rust parser or a security boundary (see *Scanner limitations* below). Production isolation is supported by the combined source/feature check, the unchanged architecture boundary check, and the separately verified Release manifest feature fingerprints; absence of a string in an EXE is not used as proof.
+
+**Independent-review follow-up (2026-11-01):** Review found that the original scan omitted root application modules, could miss grouped or aliased imports, and did not constrain the Windows font loader to fixed filenames. Commit `cf56640` adds root entry/shell/preview sources, rejects direct and common grouped/aliased imports in the scanned scopes, and restricts the font exception to exactly `segoeui.ttf`, `seguisb.ttf`, and `segoeuib.ttf`.
+
+**Second independent-review follow-up (2026-11-01):** A later audit reproduced two P1 gaps in the `cf56640` gate. (1) Coverage was a fixed list (`lib.rs`, `main.rs`, `shell.rs`, `preview.rs`, `preview/**`, `ui/**`), so file I/O added to `design.rs`, to a new root module, or to an in-tree `#[path]` target passed while compiling into the default production configuration. (2) The grouped-import pattern stopped at the first inner `}`, so nested imports such as `use std::{io::{self, Write}, net::TcpStream};` passed, and the network backstop matched only nonexistent `TcpStream::new`/`UdpSocket::new` constructors. The remediation commits following `8277721` replace the fixed list with recursive enumeration and the policy classes above, add use-tree expansion, `#[path]` resolution, `include!`/`extern crate` rejection and real network constructors, and correct scanner wording that called `ui/*` preview-only. The regression suite now has 41 negative cases (the original 13 plus 28 new), including a dedicated `lib.rs` file-I/O case and fail-closed enumeration cases. In scratch copies, weakening each new protection (fixed-list coverage, old import regex, no `#[path]` check, old network constructors, old `std::x::` backstop form, `lib.rs` excluded, no `include!`/`extern crate`/`std`-root/reparse/empty-tree check) made the suite fail. This remediation was implemented and validated by the implementing agent; it has not been independently reviewed.
+
+### Scanner limitations
+
+- It is text scanning with a small comment/literal blanker and use-tree expander, not a Rust parser, type checker, or macro expander. Unusual but valid syntax it cannot tokenize fails closed; semantics it cannot see are not checked.
+- FFI is not inspected: `extern "system"` blocks, `#[link]` attributes and Win32 calls (such as the existing `user32`/`shcore` work-area queries) could reach files or the network without any `std` path.
+- `extern crate` (including aliases) is rejected, but crate roots can still be reached by other indirect means the gate does not model, for example re-exports from a dependency or a local module alias chain whose individual statements look innocuous.
+- Macro-generated behavior (`macro_rules!`, procedural macros from dependencies, `concat!`-built identifiers) is not expanded.
+- Runtime dynamic loading (`LoadLibrary`/`GetProcAddress`, COM activation) is invisible to source scanning.
+- File enumeration is not the compiled module graph: every `.rs` file under `src` is checked, including files no `mod` declaration reaches. That over-coverage is intentional and conservative.
+- Runtime filesystem, registry and network behavior can only be established by manual observation (section 4F); source checks cannot prove absence of behavior.
+- The gate is a regression guard for this boundary, not a formal security boundary.
 
 No Desktop or lower-crate runtime dependency, production API, authentication path, or real vault operation was added.
 
@@ -31,6 +53,8 @@ Both Release variants were built with the existing PowerShell 7 driver into isol
 | Synthetic design preview | `["design-preview"]` | `target/phase-1b/artifacts/phase1b4-20261101-02/design-preview/EncryptDrive-design-preview-a2ea3de88e89-phase1b4-20261101-02.exe` | 15,534,592 bytes | `2DF126C0A601F4C294B53323D886FB33686BF92128639E8F2A74CD38DAE1266F` |
 
 These are raw SHA-256 hashes of the Release executables, not normalized hashes. The manifest source identity is the exact clean candidate revision used for the builds; only this report's artifact-evidence rows changed in the following documentation commit, with no executable-affecting source changes afterward.
+
+The artifacts were **not rebuilt** for the scanner remediation. The remediation commits following `8277721` change only `scripts/ShellIsolation.psm1`, `scripts/tests/verify-shell-isolation.tests.ps1` and this report; `git diff a2ea3de HEAD -- apps crates Cargo.toml Cargo.lock rust-toolchain.toml scripts/build-windows.ps1 scripts/BuildArtifacts.psm1 .github` is empty, so no build input changed since the artifact source revision.
 
 | Build input | Observed value |
 |---|---|
@@ -57,8 +81,8 @@ The local Windows registry reports ProductName `Windows 10 Pro`, DisplayVersion 
 | `cargo clippy --workspace --all-targets --features design-preview --locked -- -D warnings` | PASS | Preview feature configuration, strict warnings. |
 | `cargo test --workspace --features design-preview --locked` | PASS | 137 passed, 0 failed; includes preview model, operation, keyboard, dialog and UI-state tests. |
 | `scripts/verify-architecture.ps1` | PASS | Five workspace packages and direct dependency boundaries verified. |
-| `scripts/verify-shell-isolation.ps1` | PASS | Production-shell defaults, feature gates, scenario catalog, source calls and preview labeling checked. |
-| `scripts/tests/verify-shell-isolation.tests.ps1` | PASS | Thirteen intentional mutations rejected, including default-feature enablement, unguarded UI, direct/grouped/aliased file and core imports, I/O in root preview/shell sources, an unbounded font path, a fixture in the production shell, and a shortened scenario catalog. |
+| `scripts/verify-shell-isolation.ps1` | PASS | All 20 Rust files under `apps/encryptdrive-desktop/src` scanned; production-shell defaults, feature gates, scenario catalog, imports, fully qualified calls, `#[path]` targets and preview labeling checked. Re-run after the scanner remediation. |
+| `scripts/tests/verify-shell-isolation.tests.ps1` | PASS | 41 negative cases rejected (re-run after the scanner remediation). The original 13: default-feature enablement, unguarded UI module, direct/grouped/aliased file and core imports, I/O in root preview/shell sources, an unbounded font path, a fixture in the production shell, and a shortened scenario catalog. The 28 added: file I/O in `design.rs`, in a new root module, in `lib.rs` (dedicated case), and in an in-tree `#[path]` target; `#[path]` escaping `src`, absolute, or pointing at a non-Rust file; `include!`; `extern crate`; nested, aliased, multiline, leading-`::`, `std`-root alias/self-alias/glob, and `std::os` imports; unqualified `TcpStream::connect` and `TcpListener::bind`; leading-`::` and comment-split fully qualified `std` paths; `std::path` in a non-font UI file; a second filesystem call in the font loader; a snapshot missing `design.rs`; and fail-closed enumeration of a missing source root, an empty tree, and a junction inside the tree (the junction case prints `BLOCKED` instead where Windows denies junction creation; it ran on this host). Also passed through a GitHub-style `pwsh -command` wrapper (exit 0 on real source, nonzero on a violating scratch copy). |
 | `scripts/tests/verify-build-artifacts.tests.ps1` | PASS with one BLOCKED subcase | All executable and manifest rejection cases passed; Windows denied junction creation for the reparse-point case. |
 | `scripts/tests/verify-powershell-wrapper.tests.ps1` | PASS | Standalone and GitHub Actions wrapper exit propagation, including intentional failures. |
 | `scripts/tests/verify-dependency-inventory.tests.ps1` | PASS | Malformed and inconsistent inventories, lock/configuration, checksums, classification, and redaction cases. |
@@ -67,6 +91,8 @@ The local Windows registry reports ProductName `Windows 10 Pro`, DisplayVersion 
 | Hosted CI for this candidate | NOT RUN | No push was authorized. The new workflow step is local-only until a separately authorized publication. |
 
 Cargo emitted non-fatal Windows incremental-cache hard-link warnings during test compilation and fell back to copying cache files.
+
+After the scanner remediation, `git diff --check`, the seven Cargo commands above (49 and 137 tests, unchanged), `scripts/verify-architecture.ps1`, `scripts/verify-shell-isolation.ps1` and the shell-isolation regression suite were re-run and passed. The build-artifact, PowerShell-wrapper and dependency-inventory suites and verifiers were not re-run because none of their inputs changed.
 
 ## 3. Production shell and preview behavior checks
 
@@ -151,6 +177,20 @@ Record the actual monitor and scale for each run. Do not infer DPI coverage from
 
 **Recorded status:** NOT RUN — the executable was not launched; offline behavior has not been observed.
 
+#### F.1 Process Monitor and network observation procedure
+
+Use this to observe what the production shell actually touches at startup. It complements, and cannot be replaced by, the source gate.
+
+1. Start Sysinternals Process Monitor (`Procmon64.exe`) before launching the shell. In **Filter**, add `Process Name` `is` `<exact test EXE name>` (for example `EncryptDrive-shell-a2ea3de88e89-phase1b4-20261101-02.exe`) → `Include`, and remove other Include rules so only that process is captured. Keep Process Monitor's default Exclude rules for its own and System activity.
+2. Clear the display, start capture, then cold-launch the shell (no other EncryptDrive process running, ideally after a reboot or at least after closing every EncryptDrive window). Capture from before launch until the empty state is shown and idle, roughly 30–60 seconds, then stop capture.
+3. Classify every file and registry event. Expected Windows resources include: the EXE itself and its directory; system DLLs under `%WINDIR%\System32`/`SysWOW64` and WinSxS; GPU driver files and driver/shader caches (for example under `%LOCALAPPDATA%` vendor or `D3DSCache` folders); fonts, including exactly `segoeui.ttf`, `seguisb.ttf` and `segoeuib.ttf` under `%WINDIR%\Fonts`; and registry reads for DPI, theme, accessibility, input and graphics settings. Any write, create, rename or delete outside OS/driver-managed caches, any read of user documents or vault-like paths, and any font file other than the three approved names is **unexpected**.
+4. Record unexpected file operations sanitized: operation, result, category, and a redacted path (for example `%USERPROFILE%\…\<file>.ext`). Do not record personal paths, usernames or file contents, and do not commit PML/CSV captures to the repository.
+5. Repeat the cold launch offline (network disabled by the owner) and confirm the shell still reaches its empty state.
+6. For network, open Resource Monitor (`resmon.exe`) → **Network** tab, tick the test EXE's process, and check *Network Activity* and *TCP Connections* during launch and idle; an equivalent per-process tool (for example a Process Monitor `Network` event class filter or TCPView) is acceptable. Any connection or listener is **unexpected** for this shell.
+7. Limitations: observation covers only the captured window and the code paths exercised (launch, empty state, and any interaction performed); background OS components may act on the process's behalf; and the absence of events is not proof that untriggered code paths cannot touch files or the network.
+
+**Recorded status:** NOT RUN — no Process Monitor or Resource Monitor capture was taken.
+
 ### G. Synthetic preview-only demonstration
 
 1. Launch the separately hashed design-preview executable with `--design-preview --scenario=6` for the synthetic explorer.
@@ -173,6 +213,7 @@ Record the actual monitor and scale for each run. Do not infer DPI coverage from
 | High Contrast and increased text scaling | NOT RUN | No interactive validation. |
 | UI Automation tree and Windows Narrator | NOT RUN | No accessibility client was opened. |
 | Offline launch and no runtime download | NOT RUN | No app launch or network-isolated host test. |
+| Process Monitor file/registry and Resource Monitor network observation (F.1) | NOT RUN | No capture taken. |
 | Preview-only visual warnings and dialogs | NOT RUN | Automated state/dialog tests passed; no live screenshot. |
 
 No screenshots, visual observations, Narrator scores, runtime-download observations, or GUI performance measurements were produced for this candidate.
@@ -183,7 +224,7 @@ The new workflow step runs the shell/preview source isolation regression suite a
 
 Remaining limitations and follow-up:
 
-- Hosted CI for the two local candidate commits was not run because this task does not authorize a push.
+- Hosted CI was not run for the local candidate — six commits on `dev` after `main` (`61e7d9e`) through `8277721`, plus the scanner-remediation commits following `8277721` (one changing the scanner module and its regression suite, one updating this report) — because no push was authorized.
 - The manifest reparse-point negative test's junction subcase remains BLOCKED by the host's access denial; all other manifest rejection cases passed.
 - No UI Automation tree, Narrator, High Contrast, display scale, mixed-monitor, or manual keyboard-only result has been verified.
 - No clean-host/offline launch or runtime-redistributable check has been performed.
@@ -194,7 +235,7 @@ Remaining limitations and follow-up:
 
 Review the local commits on `dev` and verify:
 
-1. `scripts/ShellIsolation.psm1` scans the preview, UI, and root application Rust modules; its negative cases cover direct and common aliased imports, including grouped imports. It does not claim to be a complete Rust parser or runtime security boundary; the Windows font-read exception is limited to three fixed basenames under Fonts.
+1. `scripts/ShellIsolation.psm1` recursively scans every Rust file under `apps/encryptdrive-desktop/src` with the UI and strict policy classes, expands nested use-trees, resolves `#[path]` targets, and fails closed on missing inputs, empty trees, unreadable files and reparse points; its 41 negative cases cover the original 13 gaps and the second-review bypasses. It does not claim to be a complete Rust parser or runtime security boundary; the Windows font-read exception is limited to three fixed basenames under Fonts and to `ui/icons.rs`.
 2. The source checker, default/preview Release manifest features, and existing architecture validator jointly support the isolation claims; `cfg(test)` preview compilation is described correctly.
 3. The recorded shell behavior matches the source and does not treat Trash navigation as a real Trash operation or the core dependency declaration as readiness API usage.
 4. The raw executable hashes match the ignored local files under `target/phase-1b/artifacts/phase1b4-20261101-02/`; the report distinguishes them from normalized hashes and names the exact build revision.
