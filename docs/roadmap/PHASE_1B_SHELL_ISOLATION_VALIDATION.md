@@ -1,8 +1,8 @@
 # Phase 1B-4 — Production Shell and Synthetic Preview Isolation
 
-**Status:** Local implementation candidate on `dev`; hosted CI and interactive Windows validation are pending.
+**Status:** Owner-accepted with explicit verification deferrals N01–N09 and B01–B04. The closeout document's own hosted CI was pending when this record was prepared; see the dated final disposition below and the task report for subsequent exact-SHA results.
 **Source revision for Release artifacts:** `a2ea3de88e89298369b0790b026be10f560ef752` (`dirty=false`)
-**Validation date:** 2026-11-01
+**Validation dates:** 2026-11-01 (source/build evidence); 2026-11-02 (focused GUI validation and owner disposition)
 **Scope:** Automated source/feature isolation checks, two isolated Windows Release builds, and a repeatable owner-run smoke protocol. No real vault behavior is implemented.
 
 ## 1. Verified implementation boundary
@@ -88,7 +88,7 @@ The local Windows registry reports ProductName `Windows 10 Pro`, DisplayVersion 
 | `scripts/tests/verify-dependency-inventory.tests.ps1` | PASS | Malformed and inconsistent inventories, lock/configuration, checksums, classification, and redaction cases. |
 | `scripts/verify-build-artifacts.ps1` on this run's manifest | PASS | Both expected variant directories, features, names, sizes, and raw hashes verified. |
 | `scripts/verify-dependency-inventory.ps1 -RequireNativeImports` | PASS | Both variants: 367 lock entries, 161 Windows-resolved packages, 27 static imports each. |
-| Hosted CI for this candidate | NOT RUN | No push was authorized. The new workflow step is local-only until a separately authorized publication. |
+| Hosted CI for pre-closeout `dev` SHA `c1f38502e67c29fdd0d8b1b7a3e792793d3f7be1` | PASS | [Run 41391647697](https://github.com/Fabianrodas/encryptdrive-desktop/actions/runs/41391647697) completed successfully for that exact SHA. It does not validate the later documentation-closeout commit. |
 
 Cargo emitted non-fatal Windows incremental-cache hard-link warnings during test compilation and fell back to copying cache files.
 
@@ -110,7 +110,9 @@ After the scanner remediation, `git diff --check`, the seven Cargo commands abov
 | Preview scenario list | PASS | Isolation gate found exactly 22 listed scenarios. |
 | Release variant identity | PASS | Clean manifest declares no features for shell and only `design-preview` for preview; independent verifier passed both. |
 
-## 4. Owner-run Windows smoke protocol
+## 4. Owner-run Windows smoke protocol (2026-11-01 snapshot)
+
+**Historical status note:** The `NOT RUN` records in this protocol and its manual evidence matrix describe the 2026-11-01 snapshot only. A focused Windows GUI session was performed on 2026-11-02; its results and the current status of every deferred gate are recorded in section 7. The dated final disposition supersedes the earlier overall candidate status without rewriting what was known during the original snapshot.
 
 ### Before starting
 
@@ -216,24 +218,26 @@ Use this to observe what the production shell actually touches at startup. It co
 | Process Monitor file/registry and Resource Monitor network observation (F.1) | NOT RUN | No capture taken. |
 | Preview-only visual warnings and dialogs | NOT RUN | Automated state/dialog tests passed; no live screenshot. |
 
-No screenshots, visual observations, Narrator scores, runtime-download observations, or GUI performance measurements were produced for this candidate.
+As of the 2026-11-01 snapshot, no screenshots, visual observations, Narrator scores, runtime-download observations, or GUI performance measurements had been produced for this candidate. The focused 2026-11-02 GUI session produced live observations and 15 screenshots; Narrator, DPI/High Contrast, multi-monitor, and offline instrumentation remain unverified or blocked as detailed in section 7. The screenshots remain in ignored local evidence and are not part of this repository.
 
 ## 5. CI and remaining gates
 
 The new workflow step runs the shell/preview source isolation regression suite as a headless check. It does not claim GUI, DPI, accessibility, offline-host, or packaging validation. Existing SHA-pinned actions, `contents: read`, locked Cargo commands, manifest rejection suite, PowerShell wrapper suite, dependency inventory checks, separate Release variants, manifest verification, and architecture validation remain in place. No artifact-upload or release step was added.
 
-Remaining limitations and follow-up:
+Remaining limitations and follow-up (status at the 2026-11-01 snapshot; current disposition is in section 7):
 
-- Hosted CI was not run for the local candidate — six commits on `dev` after `main` (`61e7d9e`) through `8277721`, plus the scanner-remediation commits following `8277721` (one changing the scanner module and its regression suite, one updating this report) — because no push was authorized.
+- At the 2026-11-01 snapshot, hosted CI had not run for that local candidate. Before the closeout-document change, `dev` had advanced to `c1f38502e67c29fdd0d8b1b7a3e792793d3f7be1`, eight commits ahead of `main` at `61e7d9ebf063f23d9c56856cc37a5e6c6c4477fd`; its exact-SHA hosted run is now recorded in section 2 and section 7. The earlier six-commit count through `8277721` was a historical point-in-time count, not the final candidate count.
 - The manifest reparse-point negative test's junction subcase remains BLOCKED by the host's access denial; all other manifest rejection cases passed.
 - No UI Automation tree, Narrator, High Contrast, display scale, mixed-monitor, or manual keyboard-only result has been verified.
 - No clean-host/offline launch or runtime-redistributable check has been performed.
 - Clean-host packaging, Microsoft runtime redistribution, installer/portable execution, signing, reproducible cross-host builds, support range, and licensing/release approval remain later gates.
 - Vault Format 1, cryptography, storage, authentication, and real vault operations are outside this work and remain unimplemented.
 
-## 6. Independent review handoff
+## 6. Independent review handoff (historical, 2026-11-01)
 
-Review the local commits on `dev` and verify:
+This was a review checklist at the 2026-11-01 snapshot, not evidence that an independent review had completed. The later owner acceptance is a governance decision and does not convert this checklist into an independent audit. No separate post-remediation independent re-review is recorded here; the focused GUI evidence and hosted CI are reported separately below.
+
+The checklist requested review of the then-local commits on `dev`:
 
 1. `scripts/ShellIsolation.psm1` recursively scans every Rust file under `apps/encryptdrive-desktop/src` with the UI and strict policy classes, expands nested use-trees, resolves `#[path]` targets, and fails closed on missing inputs, empty trees, unreadable files and reparse points; its 41 negative cases cover the original 13 gaps and the second-review bypasses. It does not claim to be a complete Rust parser or runtime security boundary; the Windows font-read exception is limited to three fixed basenames under Fonts and to `ui/icons.rs`.
 2. The source checker, default/preview Release manifest features, and existing architecture validator jointly support the isolation claims; `cfg(test)` preview compilation is described correctly.
@@ -242,4 +246,68 @@ Review the local commits on `dev` and verify:
 5. The report marks hosted CI and every live GUI/accessibility/display/offline check as NOT RUN rather than implying source/tests prove runtime behavior.
 6. No executable, manifest, build log, user data, or private material is tracked.
 
-Phase 1B-4 remains a local candidate pending independent review, owner-run manual validation, and separate owner disposition. No Phase 1B-5 or VF1 implementation is included.
+At the time of this historical handoff, Phase 1B-4 was still a local candidate. The later owner disposition and focused validation are recorded below. No Phase 1B-5 or VF1 implementation is included.
+
+## 7. Final disposition — 2026-11-02
+
+### Owner decision and accepted scope
+
+**Disposition:** **ACCEPTED BY OWNER WITH EXPLICIT VERIFICATION DEFERRALS.** This is engineering-milestone acceptance of the production-shell/preview isolation work. It is not product-release certification, accessibility certification, Windows distribution approval, or authorization for real vault operations.
+
+The owner recorded: “Apruebo Phase 1B-4 con los diferimientos explícitos N01–N09 y B01–B04, sin considerarlos PASS. Autorizo la integración controlada fast-forward de dev a main, su CI hospedada y la preparación de Phase 1B-5, sin iniciar VF1, criptografía, autenticación, almacenamiento ni operaciones reales.”
+
+The approval preserves every deferral below as open. It does not claim that NOT RUN or BLOCKED checks passed. The source and build evidence above remains tied to its original build source revision and raw executable hashes.
+
+### Focused GUI evidence
+
+The 2026-11-02 Windows session report records **49 agent-observed GUI checks: 36 PASS, 0 FAIL, 9 NOT RUN / UNVERIFIED, and 4 BLOCKED**. Its passing subset consists of S01–S08 for the production shell and P01–P28 for the synthetic preview. The separate **10 OWNER-REPORTED PASS** observations remain a distinct evidence population and are not added to the agent-observed count. UI Automation inspection passed for the preview, but this is not a Narrator result.
+
+The session used only the synthetic in-memory preview data; no real vault, personal file, plaintext export, or destination was opened. Fifteen real application-window screenshots were retained in ignored local evidence and are not committed or published. The evidence report is also local and ignored; it is not a tracked release artifact.
+
+For the 10,000-entry selection scenario, UI Automation reported **10,000 items · 10,000 selected**. The synthetic Trash confirmation explicitly displayed **10,005** affected entries, including five internal fixture entries. That scope was visible in the confirmation; this observation does not establish or authorize real-vault deletion behavior.
+
+### Deferred verification ledger
+
+The gate statuses below are current as of this disposition. NOT RUN / UNVERIFIED means evidence was not obtained; BLOCKED means the required environment or safe test condition was unavailable. Each gate must be reconsidered at its stated checkpoint.
+
+| ID | Required verification | Status | Existing evidence and reason for deferral | Required future evidence and checkpoint |
+|---|---|---|---|---|
+| N01 | Cancel a synthetic long-running operation and verify the terminal state | NOT RUN / UNVERIFIED | Progress reached 8% and Cancel was visible, but activation was not confirmed before completion. | Reliable live input showing cancellation and unchanged synthetic scope, before relying on cancellation behavior. |
+| N02 | Open the selected-row context menu with Shift+F10 | NOT RUN / UNVERIFIED | Mouse context menu passed; automated chord delivery was not confirmed. | Keyboard-only live test with the menu opening for the focused row, before relying on this shortcut. |
+| N03 | Ctrl+click and Shift+click multi-selection | NOT RUN / UNVERIFIED | Ctrl+A passed; the input tool could not hold modifiers during the click. | Live modifier-click tests confirming IDs, ranges and action scope, before relying on multi-selection. |
+| N04 | Shift+Tab focus traversal in the preview | NOT RUN / UNVERIFIED | Shell Tab/Shift+Tab passed; preview evidence covered Tab only. | Live preview focus-order test with visible focus, before relying on reverse traversal. |
+| N05 | Alt+Left and Alt+Up navigation | NOT RUN / UNVERIFIED | The input route did not preserve Alt; Alt+Up behaved as Up. | Live chord test confirming the intended navigation behavior, before relying on these shortcuts. |
+| N06 | Resize the preview to a compact window size | NOT RUN / UNVERIFIED | The attempted border drag did not change the window size; no compact layout was observed. | Live resize at an agreed compact target size, with actual dimensions recorded and controls checked for usability, before relying on compact-window behavior. |
+| N07 | Windows Narrator spoken output and reading order | NOT RUN / UNVERIFIED | UI Automation tree names, roles and states were inspected; reliable Narrator output could not be observed. | Narrator session covering shell and preview, dialogs, table and status announcements, before accessibility/release acceptance. |
+| N08 | Sort the preview table by Type | NOT RUN / UNVERIFIED | Name, Size and Modified sorting passed; Type was not operated. | Live Type sort and stable selection verification, before relying on Type sorting. |
+| N09 | ArrowUp focus and selection behavior in the table | NOT RUN / UNVERIFIED | No reliable independent ArrowUp evidence was obtained; ArrowDown and other listed keys passed. | Live ArrowUp test confirming focus retention, selection and scrolling, before relying on that behavior. |
+| B01 | 125%, 150% and 200% display scaling plus increased text scale | BLOCKED | Only the physical owner's 100% display session was available; Windows settings were not changed. | Controlled Windows VM or separately authorized test host with recorded scale/text settings, before claiming the corresponding Windows support or release readiness. |
+| B02 | High Contrast / Contrast Themes | BLOCKED | Windows accessibility settings were not changed in the physical session. | Controlled high-contrast session with screenshots and interaction checks, before claiming applicable Windows support or release readiness. |
+| B03 | Multiple monitors, work area, taskbar placement and moving between displays | BLOCKED | Only one primary display was available. | Controlled multi-monitor test with recorded monitor arrangement, work areas and placement results, before claiming applicable Windows support or release readiness. |
+| B04 | Offline cold launch and per-process file, registry, network and child-process observation | BLOCKED | The physical network was not disconnected; Process Monitor was unavailable and CIM inspection lacked access. No absence-of-I/O conclusion is made. | Offline VM launch with Procmon or equivalent evidence, before making runtime-isolation/real-operation claims or distribution decisions. |
+
+N01–N06, N08 and N09 remain open before relying on those interaction behaviors. N07 remains a release/accessibility gate. B01–B03 remain open before applicable Windows support or release-readiness claims. B04 remains open before runtime-isolation claims for real operations or distribution. These checkpoints do not assert that the work has been scheduled or authorized.
+
+### Shift+Delete behavior
+
+Source inspection of `delete_dialog_for` and the focused session establish the current synthetic behavior: Delete in Files opens Move to Trash; Shift+Delete in Files is an intentional no-op; Shift+Delete in Trash opens the Permanent Delete path in source; Delete without Shift in Trash does not open that dialog. The Files no-op is not classified as a defect. A Windows Explorer-style Files shortcut would require a separate UX decision. The Trash keyboard interaction, including Cancel and synthetic-only confirmation scope, remains unverified and is not promoted to PASS by source inspection.
+
+### Independent review status
+
+The two historical review rounds found scanner gaps and prompted the remediation documented above. The remediation and its regression tests were validated by the implementing agent and by hosted CI on the exact pre-closeout `dev` commit. This report does not record a separate independent re-review after that remediation. The focused validation report assigned no new P0/P1/P2 finding to the paths it executed; owner acceptance is not a substitute for an independent audit, and this phase does not require one as an additional condition of the recorded governance disposition.
+
+### Isolation scanner limitations
+
+The isolation scanner is a targeted text-based defense-in-depth regression guard, not a Rust parser, type checker, macro expander, or security boundary. It does not model all FFI/Win32 paths, re-exports, indirect aliases, macro-generated code, dynamic loading, or runtime behavior; valid unusual syntax such as a fully qualified `std::r#fs` path may evade its textual patterns, and conservative false positives are possible. It scans the source tree rather than deriving the compiled module graph. Its passing result does not prove runtime filesystem/network isolation or provide formal security assurance. The existing Windows font read and monitor/DPI FFI remain explicitly described in section 1.
+
+### Build provenance and hosted CI
+
+The local Release executables retain their original build identity: source `a2ea3de88e89298369b0790b026be10f560ef752`; shell raw SHA-256 `378651CE7B8CECD18694335C620245F7D60D0F6AD99BDEAA5A914D51A55236D7`; synthetic preview raw SHA-256 `2DF126C0A601F4C294B53323D886FB33686BF92128639E8F2A74CD38DAE1266F`. These are raw file hashes and are not expected to match separately built hosted CI artifacts.
+
+The earlier successful hosted run is [41391647697](https://github.com/Fabianrodas/encryptdrive-desktop/actions/runs/41391647697), Windows Rust CI on push to `dev`, exact `head_sha=c1f38502e67c29fdd0d8b1b7a3e792793d3f7be1`, conclusion `success`. Its `validate` job passed formatting, locked workspace compilation, strict Clippy, default and synthetic-preview tests, manifest rejection tests, PowerShell wrapper tests, dependency-inventory tests, the 41-case shell/preview isolation suite, separate Windows Release builds, artifact verification, native dependency inventory, and workspace boundary validation. This run validates `c1f3850`, not the documentation-closeout revision.
+
+At this document's commit snapshot, the closeout change itself had not yet been pushed or tested by hosted CI. Its exact-SHA `dev` CI, subsequent strict fast-forward integration, and exact-SHA `main` CI must be reported from their own runs; the earlier run above cannot substitute for them. The final task report records those outcomes. No executable, screenshot, manifest, build log, personal path, or raw capture is included in this commit.
+
+### Phase boundary
+
+Phase 1B-4 acceptance covers only the documented engineering isolation scope and the explicit disposition of the manual gates. It does not approve release readiness, Windows distribution, runtime isolation certification, accessibility certification, or real-vault functionality. Vault Format 1, cryptography, authentication, storage, import/export, permanent deletion, packaging, and real vault operations remain outside this phase and unimplemented. Phase 1B-5 is authorized for preparation only; it is not started by this record.
