@@ -141,6 +141,12 @@ Assert-SnapshotRejected (Add-SnapshotText $source 'ui/theme.rs' 'fn probe() { ::
 Assert-SnapshotRejected (Add-SnapshotText $source 'preview.rs' 'pub fn probe() { let _ = std::/* split */fs::read("x"); }') 'comment-split std::fs path' "'std::"
 Assert-SnapshotRejected (Add-SnapshotText $source 'ui/screens.rs' 'fn probe() -> bool { std::path::Path::new("C:\\").exists() }') 'std::path outside the UI font loader' "'std::path'"
 Assert-SnapshotRejected (Add-SnapshotText $source 'ui/icons.rs' 'fn probe() { let _ = std::fs::read_dir("x"); }') 'second filesystem call in the UI font loader' 'only allowed UI file read'
+Assert-SnapshotRejected (Add-SnapshotText $source 'preview/model.rs' 'pub fn probe() { let _ = std::r#fs::metadata("x"); }') 'raw-identifier std::r#fs path in strict scope' $side
+Assert-SnapshotRejected (Add-SnapshotText $source 'ui/components.rs' 'fn probe(_: std::r#net::SocketAddr) {}') 'raw-identifier std::r#net path in UI scope' $side
+
+$rawPathsInNonCode = Add-SnapshotText $source 'preview/model.rs' "// std::r#fs::read(`"not code`")`nconst MESSAGE: &str = `"std::r#net::SocketAddr`";"
+Assert-ShellPreviewIsolation -Source $rawPathsInNonCode | Out-Null
+Write-Output 'PASS: raw-identifier paths in comments and string literals are ignored.'
 
 # --- Snapshot and enumeration fail-closed behavior ---
 $missingDesign = Copy-IsolationSnapshot $source

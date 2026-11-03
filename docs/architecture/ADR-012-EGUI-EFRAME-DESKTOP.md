@@ -41,3 +41,9 @@ Before production acceptance, complete the outstanding Phase 0.7 UI review (incl
 - eframe/egui remains subject to the recorded accessibility and platform gates; AccessKit being enabled is not proof of correct roles or announcements.
 - Phase 1A exposes no vault, file, crypto, authentication, storage, network, or telemetry capability.
 - The repository remains an implementation workspace, not a public release or licensing decision.
+
+## Implementation status clarification — 2026-11-02
+
+The default production shell at the Phase 1B closeout baseline is narrower than the originally described compact Explorer shell: it displays the application header, Files/Trash navigation, Settings, a status bar, and empty states. It has no operational file table, columns, sorting, command bar, search, or file shortcuts. Explorer tables and simulated actions are confined to the opt-in synthetic design preview. The desktop manifest declares `encryptdrive-core`, but the current shell source does not call its readiness API. This records implementation status; it does not change the approved UX6.3 design baseline or authorize real vault operations.
+
+The phrase “no data or network calls” in the Phase 1A engineering decision refers to the absence of product data and network operations in the shell. It is not a guarantee of zero runtime I/O: the app uses OS resources such as system fonts and Windows monitor/work-area information, and framework/driver behavior has not been fully observed. The runtime observation gate remains open as recorded in the [Phase 1B-4 validation report](../roadmap/PHASE_1B_SHELL_ISOLATION_VALIDATION.md) and the [Phase 1B final closeout](../roadmap/PHASE_1B_FINAL_CLOSEOUT.md).

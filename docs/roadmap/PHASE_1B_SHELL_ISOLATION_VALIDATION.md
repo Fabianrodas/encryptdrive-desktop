@@ -311,3 +311,7 @@ At this document's commit snapshot, the closeout change itself had not yet been 
 ### Phase boundary
 
 Phase 1B-4 acceptance covers only the documented engineering isolation scope and the explicit disposition of the manual gates. It does not approve release readiness, Windows distribution, runtime isolation certification, accessibility certification, or real-vault functionality. Vault Format 1, cryptography, authentication, storage, import/export, permanent deletion, packaging, and real vault operations remain outside this phase and unimplemented. Phase 1B-5 is authorized for preparation only; it is not started by this record.
+
+## Phase 1B-5 final disposition — 2026-11-02
+
+The later Phase 1B-5 owner decision and overall engineering closeout are recorded in the [Phase 1B final closeout](PHASE_1B_FINAL_CLOSEOUT.md). The historical statements above remain snapshots of their original review state. The closeout does not retroactively make any N01–N09 or B01–B04 item pass.

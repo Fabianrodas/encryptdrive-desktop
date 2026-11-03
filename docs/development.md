@@ -26,7 +26,7 @@ Launch the shell with:
 cargo run --locked --package encryptdrive-desktop
 ```
 
-The shell is intentionally non-operational: it has no vault, file, account, or network access. Do not add a UI action that implies an unavailable operation succeeded.
+The default shell is intentionally non-operational, and the design preview uses only synthetic fixtures and simulated actions. No production vault, credential, import/export, or user-data mutation workflow is implemented. This describes product behavior in source, not zero runtime I/O: the application uses OS/framework resources, and filesystem, registry, network, and child-process observation remains open under B04 in the [Phase 1B-4 validation record](roadmap/PHASE_1B_SHELL_ISOLATION_VALIDATION.md). Do not add a UI action that implies an unavailable operation succeeded.
 
 ## Architecture rules
 

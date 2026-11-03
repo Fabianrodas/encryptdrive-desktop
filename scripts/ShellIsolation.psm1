@@ -25,10 +25,10 @@ $script:NonCodePattern = [regex]::new(
 $script:ForbiddenImportPath = [regex]::new(
     "^(?:std(?:::\*)?|std::(?:fs|net|process|path|os)(?:::.*)?|(?:$($script:ProductionCrates))(?:::.*)?)$")
 
-# Backstops for fully qualified use, applied to both the raw text and the comment/literal-free code.
-$script:StrictStdPattern = [regex]::new('\bstd\s*::\s*(?:fs|net|process|path|os)\b')
-$script:UiAlwaysForbiddenStdPattern = [regex]::new('\bstd\s*::\s*(?:net|process|os)\b')
-$script:UiFileStdPattern = [regex]::new('\bstd\s*::\s*(?:fs|path)\b')
+# Backstops for fully qualified use, applied only to comment/literal-free Rust code.
+$script:StrictStdPattern = [regex]::new('\bstd\s*::\s*(?:r#)?(?:fs|net|process|path|os)\b')
+$script:UiAlwaysForbiddenStdPattern = [regex]::new('\bstd\s*::\s*(?:r#)?(?:net|process|os)\b')
+$script:UiFileStdPattern = [regex]::new('\bstd\s*::\s*(?:r#)?(?:fs|path)\b')
 $script:RuntimeCallPattern = [regex]::new(
     '\b(?:TcpStream\s*::\s*connect(?:_timeout)?|TcpListener\s*::\s*bind|UdpSocket\s*::\s*bind|' +
     'Command\s*::\s*new|File\s*::\s*(?:open|create|create_new|options)|OpenOptions\s*::\s*new)\s*\(')
@@ -275,10 +275,8 @@ function Assert-SourceFilePolicy {
     $patterns += if ($isUi) { $script:UiAlwaysForbiddenStdPattern } else { $script:StrictStdPattern }
     if ($isUi -and -not $isFontLoader) { $patterns += $script:UiFileStdPattern }
     foreach ($pattern in $patterns) {
-        foreach ($text in @($code, $raw)) {
-            $found = $pattern.Match($text)
-            if ($found.Success) { & $reject "'$($found.Value)'" }
-        }
+        $found = $pattern.Match($code)
+        if ($found.Success) { & $reject "'$($found.Value)'" }
     }
 
     if ($isFontLoader) {

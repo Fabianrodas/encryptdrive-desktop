@@ -15,6 +15,16 @@ use crate::design::{
 };
 
 const CARD_WIDTH: f32 = 460.0;
+const PASSWORD_PREVIEW_WARNING: &str = "Design preview only. Do not enter a real password.";
+
+fn preview_password_field(ui: &mut egui::Ui, value: &mut String, hint: &str, palette: Palette) {
+    ui.label(
+        RichText::new(PASSWORD_PREVIEW_WARNING)
+            .size(TypeScale::HELPER)
+            .color(palette.text),
+    );
+    labeled_text_field(ui, "Password", value, hint, true, palette);
+}
 
 impl DesktopApp {
     pub(super) fn render_auth_screen(&mut self, ui: &mut egui::Ui, palette: Palette) {
@@ -61,12 +71,12 @@ impl DesktopApp {
                                 header(ui, Icon::Lock, "Create a vault", "Choose a name and a strong password. You'll need the password to unlock the vault.", palette);
                                 labeled_text_field(ui, "Vault name", &mut preview.form_identity, "For example, Personal files", false, palette);
                                 ui.add_space(Geometry::SPACE_3);
-                                labeled_text_field(ui, "Password", &mut preview.form_secret, "At least 12 characters", true, palette);
+                                preview_password_field(ui, &mut preview.form_secret, "At least 12 characters", palette);
                                 ui.add_space(Geometry::SPACE_6);
                                 ui.horizontal(|ui| {
                                     let button = dialog_button(ui, "Create vault", ButtonKind::Primary, half, palette);
                                     if button_activated(ui, &button) {
-                                        preview.form_feedback = Some("Preview only: no vault was created.".to_owned());
+                                        preview.submit_password_form("Preview only: no vault was created.");
                                     }
                                     let button = dialog_button(ui, "Back", ButtonKind::Standard, half, palette);
                                     if button_activated(ui, &button) {
@@ -90,12 +100,12 @@ impl DesktopApp {
                                 })
                                 .labelled_by(vault_label.id);
                                 ui.add_space(Geometry::SPACE_3);
-                                labeled_text_field(ui, "Password", &mut preview.form_secret, "Vault password", true, palette);
+                                preview_password_field(ui, &mut preview.form_secret, "Vault password", palette);
                                 ui.add_space(Geometry::SPACE_6);
                                 ui.horizontal(|ui| {
                                     let button = dialog_button(ui, "Unlock", ButtonKind::Primary, half, palette);
                                     if button_activated(ui, &button) {
-                                        preview.form_feedback = Some("Preview only: unlocking is not connected.".to_owned());
+                                        preview.submit_password_form("Preview only: unlocking is not connected.");
                                     }
                                     let button = dialog_button(ui, "Back", ButtonKind::Standard, half, palette);
                                     if button_activated(ui, &button) {
@@ -122,12 +132,12 @@ impl DesktopApp {
                                 header(ui, Icon::Account, &title, "Use the email address and password for this account.", palette);
                                 labeled_text_field(ui, "Email address", &mut preview.form_identity, "name@example.com", false, palette);
                                 ui.add_space(Geometry::SPACE_3);
-                                labeled_text_field(ui, "Password", &mut preview.form_secret, "Account password", true, palette);
+                                preview_password_field(ui, &mut preview.form_secret, "Account password", palette);
                                 ui.add_space(Geometry::SPACE_6);
                                 ui.horizontal(|ui| {
                                     let button = dialog_button(ui, "Sign in", ButtonKind::Primary, half, palette);
                                     if button_activated(ui, &button) {
-                                        preview.form_feedback = Some("Preview only: sign-in is not implemented.".to_owned());
+                                        preview.submit_password_form("Preview only: sign-in is not implemented.");
                                     }
                                     let button = dialog_button(ui, "Back", ButtonKind::Standard, half, palette);
                                     if button_activated(ui, &button) {
@@ -139,12 +149,12 @@ impl DesktopApp {
                                 header(ui, Icon::Account, "Create an account", "Registration and recovery are not available in this build.", palette);
                                 labeled_text_field(ui, "Email address", &mut preview.form_identity, "name@example.com", false, palette);
                                 ui.add_space(Geometry::SPACE_3);
-                                labeled_text_field(ui, "Password", &mut preview.form_secret, "At least 12 characters", true, palette);
+                                preview_password_field(ui, &mut preview.form_secret, "At least 12 characters", palette);
                                 ui.add_space(Geometry::SPACE_6);
                                 ui.horizontal(|ui| {
                                     let button = dialog_button(ui, "Create account", ButtonKind::Primary, half, palette);
                                     if button_activated(ui, &button) {
-                                        preview.form_feedback = Some("Preview only: no account was created and no email was sent.".to_owned());
+                                        preview.submit_password_form("Preview only: no account was created and no email was sent.");
                                     }
                                     let button = dialog_button(ui, "Back", ButtonKind::Standard, half, palette);
                                     if button_activated(ui, &button) {

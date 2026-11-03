@@ -43,6 +43,11 @@ pub(super) struct PreviewState {
 }
 
 impl PreviewState {
+    pub(super) fn submit_password_form(&mut self, feedback: &'static str) {
+        self.form_secret.clear();
+        self.form_feedback = Some(feedback.to_owned());
+    }
+
     fn new() -> Self {
         Self {
             model: PreviewModel::fixture(DatasetSize::OneHundred),
@@ -689,6 +694,16 @@ mod tests {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn painted_text_contains(shape: &egui::Shape, expected: &str) -> bool {
+        match shape {
+            egui::Shape::Text(text) => text.galley.job.text.contains(expected),
+            egui::Shape::Vec(shapes) => shapes
+                .iter()
+                .any(|shape| painted_text_contains(shape, expected)),
+            _ => false,
+        }
     }
 
     fn send_app_key(
@@ -1348,6 +1363,114 @@ mod tests {
     }
 
     #[test]
+    fn synthetic_password_form_submissions_clear_input_and_keep_feedback_safe() {
+        let cases = [
+            (PreviewScenario::CreateVault, "Create vault"),
+            (PreviewScenario::UnlockVault, "Unlock"),
+            (PreviewScenario::AccountLogin, "Sign in"),
+            (PreviewScenario::RegisterAccount, "Create account"),
+        ];
+
+        for (scenario, submit_label) in cases {
+            let context = egui::Context::default();
+            context.enable_accesskit();
+            let mut app = super::DesktopApp::new(true);
+            app.set_scenario(scenario);
+            app.preview.as_mut().unwrap().form_secret = "synthetic-test-secret".to_owned();
+
+            let (_, output) = render_complete_app_frame(&mut app, &context, Vec::new(), 0.0);
+            let submit = accessible_center(&output, submit_label).unwrap_or_else(|| {
+                panic!("missing submit control {submit_label:?} for {scenario:?}")
+            });
+            click_app_point(&mut app, &context, submit, 0.02);
+
+            let preview = app.preview.as_ref().unwrap();
+            assert!(
+                preview.form_secret.is_empty(),
+                "{scenario:?} submission must clear password-like input"
+            );
+            let feedback = preview.form_feedback.as_deref().unwrap_or_default();
+            assert!(
+                !feedback.contains("synthetic-test-secret"),
+                "{scenario:?} feedback must not echo password-like input"
+            );
+        }
+    }
+
+    #[test]
+    fn leaving_synthetic_password_forms_clears_input() {
+        let cases = [
+            (
+                PreviewScenario::CreateVault,
+                "Create vault",
+                PreviewScenario::VaultSelection,
+            ),
+            (
+                PreviewScenario::UnlockVault,
+                "Unlock vault",
+                PreviewScenario::VaultSelection,
+            ),
+            (
+                PreviewScenario::AccountLogin,
+                "Account login",
+                PreviewScenario::AccountSelection,
+            ),
+            (
+                PreviewScenario::RegisterAccount,
+                "Create account",
+                PreviewScenario::AccountSelection,
+            ),
+        ];
+
+        for (scenario, scenario_label, destination) in cases {
+            let context = egui::Context::default();
+            context.enable_accesskit();
+            let mut app = super::DesktopApp::new(true);
+            app.set_scenario(scenario);
+            app.preview.as_mut().unwrap().form_secret = "synthetic-test-secret".to_owned();
+
+            let (_, output) = render_complete_app_frame(&mut app, &context, Vec::new(), 0.0);
+            let back = accessible_center(&output, "Back")
+                .unwrap_or_else(|| panic!("missing Back control for {scenario_label}"));
+            click_app_point(&mut app, &context, back, 0.02);
+
+            let preview = app.preview.as_ref().unwrap();
+            assert_eq!(
+                preview.scenario, destination,
+                "{scenario_label} Back navigation"
+            );
+            assert!(
+                preview.form_secret.is_empty(),
+                "leaving {scenario_label} must clear password-like input"
+            );
+        }
+    }
+
+    #[test]
+    fn synthetic_password_forms_warn_against_real_passwords() {
+        let warning = "Design preview only. Do not enter a real password.";
+        for scenario in [
+            PreviewScenario::CreateVault,
+            PreviewScenario::UnlockVault,
+            PreviewScenario::AccountLogin,
+            PreviewScenario::RegisterAccount,
+        ] {
+            let context = egui::Context::default();
+            context.enable_accesskit();
+            let mut app = super::DesktopApp::new(true);
+            app.set_scenario(scenario);
+            let (_, output) = render_complete_app_frame(&mut app, &context, Vec::new(), 0.0);
+            assert!(
+                output
+                    .shapes
+                    .iter()
+                    .any(|clipped| painted_text_contains(&clipped.shape, warning)),
+                "{scenario:?} must paint the warning near its password field"
+            );
+        }
+    }
+
+    #[test]
     fn synthetic_full_app_click_opens_and_validates_folder_dialog() {
         let context = egui::Context::default();
         context.enable_accesskit();
@@ -1408,7 +1531,7 @@ mod tests {
                             egui::pos2(bounds.x1 as f32, bounds.y1 as f32),
                         );
                         (!screen.expand(0.5).contains_rect(rect))
-                            .then(|| format!("{:?} {:?}", node.role(), node.label()))
+                            .then(|| format!("{:?} {:?} {rect:?}", node.role(), node.label()))
                     })
                     .collect()
             })
