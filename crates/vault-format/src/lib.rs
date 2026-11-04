@@ -99,10 +99,20 @@ pub fn check_input_length(kind: InputKind, actual_bytes: usize) -> Result<(), Fo
 /// This wrapper borrows its input and makes no copy. Its name and API do not imply JSON parsing,
 /// structural validation, or cryptographic authentication. Empty bytes pass the length check,
 /// but are not thereby valid VF1 data.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct LengthCheckedInput<'a> {
     kind: InputKind,
     bytes: &'a [u8],
+}
+
+impl fmt::Debug for LengthCheckedInput<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LengthCheckedInput")
+            .field("kind", &self.kind)
+            .field("len", &self.bytes.len())
+            .finish()
+    }
 }
 
 impl<'a> LengthCheckedInput<'a> {
@@ -139,8 +149,7 @@ impl<'a> LengthCheckedInput<'a> {
 mod tests {
     use super::{
         ENCRYPTED_ACCOUNT_MANIFEST_MAX_BYTES, ENCRYPTED_USER_REGISTRY_MAX_BYTES, FormatError,
-        InputKind, LengthCheckedInput, VAULT_JSON_MAX_BYTES, VF1_FORMAT_VERSION,
-        check_input_length,
+        InputKind, LengthCheckedInput, VAULT_JSON_MAX_BYTES, check_input_length,
     };
     use std::error::Error;
 
@@ -202,6 +211,50 @@ mod tests {
     }
 
     #[test]
+    fn constructor_checks_oversized_borrowed_input_using_requested_kind() {
+        let bytes = vec![0_u8; VAULT_JSON_MAX_BYTES + 1];
+
+        assert_eq!(
+            LengthCheckedInput::new(InputKind::VaultHeader, &bytes).unwrap_err(),
+            FormatError::InputTooLarge {
+                kind: InputKind::VaultHeader,
+                actual_bytes: VAULT_JSON_MAX_BYTES + 1,
+            }
+        );
+
+        let registry = LengthCheckedInput::new(InputKind::EncryptedUserRegistry, &bytes).unwrap();
+        assert_eq!(registry.kind(), InputKind::EncryptedUserRegistry);
+        assert_eq!(registry.as_bytes().as_ptr(), bytes.as_ptr());
+
+        let manifest =
+            LengthCheckedInput::new(InputKind::EncryptedAccountManifest, &bytes).unwrap();
+        assert_eq!(manifest.kind(), InputKind::EncryptedAccountManifest);
+        assert_eq!(manifest.as_bytes().as_ptr(), bytes.as_ptr());
+    }
+
+    #[test]
+    fn constructor_accepts_exact_header_limit_and_rejects_one_byte_over() {
+        let bytes = vec![0_u8; VAULT_JSON_MAX_BYTES + 1];
+
+        let exact = LengthCheckedInput::new(InputKind::VaultHeader, &bytes[..VAULT_JSON_MAX_BYTES])
+            .unwrap();
+        assert_eq!(exact.kind(), InputKind::VaultHeader);
+        assert_eq!(exact.len(), VAULT_JSON_MAX_BYTES);
+        assert_eq!(
+            exact.as_bytes().as_ptr(),
+            bytes[..VAULT_JSON_MAX_BYTES].as_ptr()
+        );
+
+        assert_eq!(
+            LengthCheckedInput::new(InputKind::VaultHeader, &bytes).unwrap_err(),
+            FormatError::InputTooLarge {
+                kind: InputKind::VaultHeader,
+                actual_bytes: VAULT_JSON_MAX_BYTES + 1,
+            }
+        );
+    }
+
+    #[test]
     fn each_input_kind_uses_its_own_limit() {
         assert_eq!(VAULT_JSON_MAX_BYTES, 262_144);
         assert_eq!(ENCRYPTED_USER_REGISTRY_MAX_BYTES, 16_777_216);
@@ -235,19 +288,18 @@ mod tests {
     }
 
     #[test]
-    fn size_error_is_deterministic_and_does_not_include_input_content() {
-        let first = check_input_length(InputKind::VaultHeader, 262_145).unwrap_err();
-        let second = check_input_length(InputKind::VaultHeader, 262_145).unwrap_err();
+    fn input_too_large_display_reports_category_actual_and_max_deterministically() {
+        let error = FormatError::InputTooLarge {
+            kind: InputKind::VaultHeader,
+            actual_bytes: VAULT_JSON_MAX_BYTES + 1,
+        };
+        let rendered = error.to_string();
 
-        assert_eq!(first, second);
-        assert_eq!(first.to_string(), second.to_string());
-        assert!(!first.to_string().contains("PRIVATE-SENTINEL"));
-    }
-
-    #[test]
-    fn numeric_size_check_does_not_require_an_input_allocation() {
-        // The API accepts the length directly; boundary values above require no large buffers.
-        assert!(check_input_length(InputKind::EncryptedAccountManifest, usize::MAX).is_err());
+        assert_eq!(
+            rendered,
+            "vault.json is 262145 bytes; maximum is 262144 bytes"
+        );
+        assert_eq!(rendered, error.to_string());
     }
 
     #[test]
@@ -262,10 +314,31 @@ mod tests {
     }
 
     #[test]
-    fn checked_input_terminology_does_not_claim_structural_or_crypto_validation() {
-        let checked = LengthCheckedInput::new(InputKind::VaultHeader, b"not parsed").unwrap();
-        assert_eq!(checked.as_bytes(), b"not parsed");
-        assert_eq!(VF1_FORMAT_VERSION, 1);
+    fn debug_for_checked_input_shows_metadata_without_borrowed_contents() {
+        let sentinel = b"VF1-SECRET-PAYLOAD-MUST-NOT-APPEAR";
+        let mut source = sentinel.to_vec();
+        source.extend_from_slice(&[0x00, 0xFF]);
+        let checked = LengthCheckedInput::new(InputKind::VaultHeader, &source).unwrap();
+        let rendered = format!("{checked:?}");
+
+        assert!(
+            !rendered.contains(&format!("{source:?}")),
+            "Debug output included the raw byte-array representation"
+        );
+        let hex_contents = source
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert!(
+            !rendered.contains(&hex_contents),
+            "Debug output included the input contents in hexadecimal"
+        );
+        assert!(
+            !rendered.contains(std::str::from_utf8(sentinel).unwrap()),
+            "Debug output included the synthetic sentinel"
+        );
+        assert!(rendered.contains("VaultHeader"));
+        assert!(rendered.contains(&format!("len: {}", source.len())));
     }
 
     #[test]

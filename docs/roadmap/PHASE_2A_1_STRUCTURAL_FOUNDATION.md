@@ -87,3 +87,38 @@ Cargo manifests and `Cargo.lock` are unchanged; the architecture validator confi
 Phase 2A-2 remains unimplemented and requires its own authorization. It may add the JSON parsing and structural behavior defined by the approved direction only after the relevant compatibility questions above are resolved. It must preserve the distinction between length-checked, structurally validated, and authenticated data. Cryptography, storage, Java fixture integration, and real vault operations remain later work.
 
 This milestone does not modify the historical Phase 1A architecture snapshot or claim Phase 1B Windows gates are closed. The following Phase 1B follow-ups remain open and unchanged: P2-F01 raw-identifier coverage for the font-loader exception; P2-F02 scanner negative-case count; P2-F03 preview password-form feedback/state assertions; P2-F04 exact SHA attribution for historical CI runs; and the non-reproduced compact-layout observation. Windows validation N01–N09 remain **NOT RUN / UNVERIFIED**; B01–B04 remain **BLOCKED**. No accessibility, Windows release, runtime-isolation, or distribution certification is claimed.
+
+## Phase 2A-1H — Controlled API Safety Hardening Addendum
+
+**Recorded:** 2026-11-04
+**Original Phase 2A-1 integrated baseline:** `191084c952f8403c8efbf63df6b400f66498a458`
+**Independent review:** Claude Code returned **CONDITIONALLY APPROVED — NONBLOCKING FOLLOW-UPS**, with no confirmed P0/P1 and four P2 findings. Follow-up review of this maintenance remains pending.
+
+This dated addendum preserves the Phase 2A-1 status snapshot above. It records only the approved Phase 2A-1H maintenance; it does not authorize or begin Phase 2A-2.
+
+### Scanner regression-count qualification
+
+- The local shell-isolation suite rejected **42 negative cases**. The host could not create its required Windows junction/reparse fixture (`NewItemCreateIOError`), so that specific subtest was **BLOCKED** locally; it is not counted as a pass.
+- Hosted Windows CI reported **43 negative cases rejected**, including successful execution of the junction-related case. The hosted result is distinct from the locally blocked fixture.
+- The local build-artifact manifest suite also reported its junction/reparse subtest as **BLOCKED** for the same host limitation; its remaining rejection cases passed.
+
+### Complete-file limits also cover corresponding backups
+
+The confirmed limits apply to complete files, including the corresponding backups: `vault.json` remains limited to **256 KiB**; the encrypted user registry and its backup share the **16 MiB** complete-file ceiling; the encrypted account manifest and its backup share the **64 MiB** complete-file ceiling. These are existing category limits. No separate plaintext limits or backup-specific `InputKind` variants are introduced.
+
+### P2 disposition
+
+| Finding | Correction recorded |
+|---|---|
+| 2A1-P2-01 — constructor regression coverage | Direct `LengthCheckedInput::new` tests reject a header input one byte over its limit, prove the same borrowed input succeeds for the larger registry and manifest categories, retain each supplied category and borrow the same buffer, and check the inclusive header boundary through the constructor. Isolated mutation checks detect removal of the constructor check, a fixed wrong category, and changing `>` to `>=`. |
+| 2A1-P2-02 — borrowed bytes in `Debug` | `LengthCheckedInput` retains `Clone` and `Copy` but implements `Debug` manually with only `kind` and `len`. Regression coverage uses a synthetic sentinel plus non-printable bytes and checks that neither the sentinel, a byte-array rendering, nor hexadecimal content appears. This does not claim memory erasure or prevent caller-side logging. |
+| 2A1-P2-03 — weak or redundant tests | The display contract now has an exact deterministic assertion for category, actual length, and maximum. The unrelated sentinel assertion and duplicate numeric-allocation test were removed; the extreme-value numeric check and meaningful boundary coverage remain. The non-behavioral terminology test was removed; the boundary terminology remains documented above. |
+| 2A1-P2-04 — evidence qualifications | The local/hosted scanner counts and junction limitation are distinguished above, and complete-file ceilings are explicitly applied to the corresponding metadata backups. |
+
+### Validation and commit evidence
+
+Local validation for this maintenance used Rust/Cargo `1.99.1` on `x86_64-pc-windows-msvc` and PowerShell `7.6.5`. The focused `vault-format` suite passed **12 tests**; the default workspace passed **61 tests** and the `design-preview` workspace passed **152 tests**. Formatting, locked checks, strict Clippy, architecture boundaries, shell/preview isolation, the existing PowerShell regression suites, isolated Windows release manifest verification for both variants, and dependency-inventory generation/validation passed. Three isolated mutation checks failed as expected, demonstrating that the constructor tests detect the specified regressions. The local junction subtests remain **BLOCKED** as described above.
+
+The maintenance SHA is the Git identity of the single commit containing this addendum and its source changes; its exact value is recorded in the Phase 2A-1H handoff. The hosted `dev` result is recorded there only after the run for that exact SHA completes. No prior `main` CI run is used as evidence for this maintenance commit. At the time this addendum was authored, the new commit and its hosted run did not yet exist.
+
+The four P2 items above are addressed in code/tests/documentation and await independent follow-up review. No parser, JSON/Base64/UUID/Unicode processing, cryptography, storage, I/O, new dependency, or real-vault operation was added. The deferred OQ-01 through OQ-08 verification dependencies and Phase 1B Windows gates remain unchanged.
