@@ -8,9 +8,14 @@
 
 use std::fmt;
 
+mod external_envelope;
 mod header;
 mod strict_json;
 
+pub use external_envelope::{
+    ExternalEnvelopeField, ExternalEnvelopeParseError, UnauthenticatedExternalEnvelope,
+    parse_encrypted_account_manifest, parse_encrypted_user_registry,
+};
 pub use header::{
     HeaderParseError, ParsedUnauthenticatedVaultHeader, StoredKdfAlgorithm, StoredKdfParameters,
     UnauthenticatedEncryptedEnvelope, VaultId, parse_vault_header,

@@ -1,5 +1,6 @@
 use crate::strict_json::{
-    JsonError, JsonKind, SchemaObjectError, StrictDocument, ValueSpan, schema_fields,
+    ExactNumberError, JsonError, JsonKind, SchemaObjectError, StrictDocument, ValueSpan,
+    parse_exact_u64, schema_fields,
 };
 use crate::{FormatError, InputKind, VAULT_JSON_MAX_BYTES};
 use base64::Engine;
@@ -572,123 +573,11 @@ fn parse_u64(bytes: &[u8], span: ValueSpan, field: &'static str) -> Result<u64, 
         return Err(HeaderParseError::WrongFieldType(field));
     }
 
-    // The scanner has already established that this span is a JSON number token.
-    // This type gate prevents serde_json's arbitrary-precision private map encoding
-    // from treating an ordinary object as a numeric value.
-    let number: serde_json::Number = serde_json::from_slice(&bytes[span.start..span.end])
-        .map_err(|_| HeaderParseError::InvalidJson)?;
-    exact_u64(&number.to_string()).map_err(|kind| match kind {
+    parse_exact_u64(bytes, span).map_err(|kind| match kind {
+        ExactNumberError::Invalid => HeaderParseError::InvalidJson,
         ExactNumberError::NonIntegral => HeaderParseError::NonIntegralNumber(field),
         ExactNumberError::OutOfRange => HeaderParseError::NumericOutOfRange(field),
     })
-}
-
-#[derive(Clone, Copy)]
-enum ExactNumberError {
-    NonIntegral,
-    OutOfRange,
-}
-
-fn exact_u64(number: &str) -> Result<u64, ExactNumberError> {
-    let (negative, unsigned) = match number.strip_prefix('-') {
-        Some(unsigned) => (true, unsigned),
-        None => (false, number),
-    };
-    let (mantissa, exponent) = match unsigned.find(['e', 'E']) {
-        Some(index) => (&unsigned[..index], parse_exponent(&unsigned[index + 1..])?),
-        None => (unsigned, 0),
-    };
-    let (whole, fraction) = match mantissa.find('.') {
-        Some(index) => (&mantissa[..index], &mantissa[index + 1..]),
-        None => (mantissa, ""),
-    };
-
-    let mut digits = String::with_capacity(whole.len() + fraction.len());
-    digits.push_str(whole);
-    digits.push_str(fraction);
-    let first_nonzero = digits.bytes().position(|byte| byte != b'0');
-    let Some(first_nonzero) = first_nonzero else {
-        return Ok(0);
-    };
-    let significant = &digits[first_nonzero..];
-    let scale = i64::try_from(fraction.len())
-        .map_err(|_| ExactNumberError::OutOfRange)?
-        .checked_sub(exponent)
-        .ok_or(ExactNumberError::OutOfRange)?;
-
-    let magnitude = if scale > 0 {
-        let scale = usize::try_from(scale).map_err(|_| ExactNumberError::NonIntegral)?;
-        if scale > significant.len()
-            || !significant[significant.len() - scale..]
-                .bytes()
-                .all(|byte| byte == b'0')
-        {
-            return Err(ExactNumberError::NonIntegral);
-        }
-        let integer_digits = significant[..significant.len() - scale].trim_start_matches('0');
-        if integer_digits.is_empty() {
-            0
-        } else {
-            parse_digits(integer_digits)?
-        }
-    } else {
-        let appended_zeroes =
-            usize::try_from(scale.checked_neg().ok_or(ExactNumberError::OutOfRange)?)
-                .map_err(|_| ExactNumberError::OutOfRange)?;
-        if significant.len().saturating_add(appended_zeroes) > 20 {
-            return Err(ExactNumberError::OutOfRange);
-        }
-        let base = parse_digits(significant)?;
-        let exponent = u32::try_from(appended_zeroes).map_err(|_| ExactNumberError::OutOfRange)?;
-        base.checked_mul(
-            10_u64
-                .checked_pow(exponent)
-                .ok_or(ExactNumberError::OutOfRange)?,
-        )
-        .ok_or(ExactNumberError::OutOfRange)?
-    };
-
-    if negative && magnitude != 0 {
-        return Err(ExactNumberError::OutOfRange);
-    }
-    Ok(magnitude)
-}
-
-fn parse_digits(digits: &str) -> Result<u64, ExactNumberError> {
-    digits.bytes().try_fold(0_u64, |value, byte| {
-        value
-            .checked_mul(10)
-            .and_then(|value| value.checked_add(u64::from(byte - b'0')))
-            .ok_or(ExactNumberError::OutOfRange)
-    })
-}
-
-fn parse_exponent(exponent: &str) -> Result<i64, ExactNumberError> {
-    let (negative, digits) = if let Some(digits) = exponent.strip_prefix('-') {
-        (true, digits)
-    } else if let Some(digits) = exponent.strip_prefix('+') {
-        (false, digits)
-    } else {
-        (false, exponent)
-    };
-    let digits = digits.trim_start_matches('0');
-    if digits.is_empty() {
-        return Ok(0);
-    }
-
-    // Values beyond this cap are already outside the u64 precision/range of any
-    // nonzero header field; the cap also bounds work for huge exponent strings.
-    let mut value = 0_i64;
-    for byte in digits.bytes() {
-        if !byte.is_ascii_digit() {
-            return Err(ExactNumberError::OutOfRange);
-        }
-        value = value
-            .saturating_mul(10)
-            .saturating_add(i64::from(byte - b'0'))
-            .min(1_000_000);
-    }
-    Ok(if negative { -value } else { value })
 }
 
 fn decode_fixed<const N: usize>(
