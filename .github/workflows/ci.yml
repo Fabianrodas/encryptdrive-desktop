@@ -44,6 +44,9 @@ jobs:
       - name: Test production-shell and preview isolation
         shell: pwsh
         run: ./scripts/tests/verify-shell-isolation.tests.ps1
+      - name: Test workspace architecture boundaries
+        shell: pwsh
+        run: ./scripts/tests/verify-architecture.tests.ps1
       - name: Build isolated Windows release variants
         shell: pwsh
         run: ./scripts/build-windows.ps1 -RunId "ci-${{ github.run_id }}-${{ github.run_attempt }}"

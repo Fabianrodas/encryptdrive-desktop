@@ -1,17 +1,25 @@
 #![forbid(unsafe_code)]
-//! Zero-I/O structural foundation for future Vault Format 1 parsing.
+//! Zero-I/O structural validation for unauthenticated Vault Format 1 headers.
 //!
-//! This crate currently provides only the known VF1 version constant and bounded byte-length
-//! checks for complete metadata files. A [`LengthCheckedInput`] has passed only its applicable
-//! size check; it has not been parsed, structurally validated, or cryptographically
-//! authenticated. This crate does not access files, networks, operating-system APIs, or secrets.
+//! [`parse_vault_header`] validates bounded caller-provided `vault.json` bytes and returns an
+//! explicitly unauthenticated representation. It does not decrypt, authenticate, or perform
+//! filesystem, network, operating-system, or secret access. [`LengthCheckedInput`] still records
+//! only that its applicable size check passed; it does not itself represent parsed data.
 
 use std::fmt;
 
+mod header;
+mod strict_json;
+
+pub use header::{
+    HeaderParseError, ParsedUnauthenticatedVaultHeader, StoredKdfAlgorithm, StoredKdfParameters,
+    UnauthenticatedEncryptedEnvelope, VaultId, parse_vault_header,
+};
+
 /// The currently specified on-disk Vault Format version.
 ///
-/// This constant identifies VF1 as version 1. It does not inspect or validate input bytes, and
-/// does not classify unsupported versions; that belongs to a future parser milestone.
+/// This constant identifies the currently supported header format version. The strict header
+/// parser uses it to classify unsupported future versions after validating the full JSON input.
 pub const VF1_FORMAT_VERSION: u8 = 1;
 
 /// Maximum complete `vault.json` file size in bytes, including its wrapped-key envelope.

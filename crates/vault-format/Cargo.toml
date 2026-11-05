@@ -4,7 +4,13 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish = false
-description = "Reserved boundary for future EncryptDrive vault-format compatibility work"
+description = "Bounded structural parsing for unauthenticated EncryptDrive VF1 headers"
 
 [lib]
 path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "=1.0.229", default-features = false }
+serde_json = { version = "=1.0.154", default-features = false, features = ["std", "arbitrary_precision"] }
+base64 = { version = "=0.23.1", default-features = false, features = ["std"] }
+time = { version = "=0.3.55", default-features = false, features = ["std", "parsing"] }
