@@ -1,6 +1,6 @@
 # Phase 2A-3 — External Encrypted Envelope Parser
 
-**Status:** Implementation complete locally; dev publication and exact-SHA hosted CI pending
+**Status:** Implementation and hosted CI passed for `ecd1bf7771ff96bbb751bc93de7fa739907c421e`; this post-run evidence update requires its own exact-SHA CI run
 **Recorded:** 2026-11-05
 **Starting baseline:** `438b17a168eef88e067613796821c991086901f9` on `main` and `dev`
 **Implementation commit:** `e13e5ed22475e22c2641a86c8d994878427868c7` (parent: `438b17a168eef88e067613796821c991086901f9`)
@@ -147,6 +147,14 @@ The inventory reported 377 Cargo.lock package records and 161 Windows-resolved p
 
 The repository's `.git` metadata required one-command `safe.directory` overrides due directory ownership; no global Git setting was changed. Git emitted line-ending normalization warnings on modified LF working copies, while `diff --numstat` showed localized edits rather than whole-file newline churn; no whole-file line-ending churn was observed.
 
+## Hosted dev CI evidence
+
+The first published implementation/evidence snapshot passed [Windows Rust CI run 42100435684](https://github.com/Fabianrodas/encryptdrive-desktop/actions/runs/42100435684). It was a `push` event on `dev`, workflow `.github/workflows/ci.yml`, exact head SHA `ecd1bf7771ff96bbb751bc93de7fa739907c421e`, run attempt 1, with job `validate` concluding **SUCCESS**. Every workflow step passed: format, locked default and preview checks, strict Clippy, both workspace test runs, PowerShell tests, isolation and architecture checks, both separate Release variants, artifact verification, and native dependency inventory.
+
+Job logs confirm `f01_f09_checks_full_file_limits_before_json_or_output_allocation` passed in both default and `design-preview` test runs (the test includes maximum-minus-one, exact maximum, and maximum-plus-one cases for both file categories). The hosted isolation suite rejected 43 negative cases and passed its junction/reparse-point case. Hosted Release artifacts were built from `ecd1bf7771ff96bbb751bc93de7fa739907c421e` with `dirty=false`; both variants verified and the native inventory collected 27 PE imports per executable. The workflow reported 377 lockfile records and 161 Windows-resolved packages per variant. Hosted artifact hashes differ from the local build and are not reproduced as local identity claims here.
+
+This CI run validates the code and roadmap at `ecd1bf...`. The current commit adds only this run evidence to the roadmap; it is a new final `dev` SHA and must receive its own hosted run before this milestone's exact-SHA publication gate is considered complete. No workflow change or manual rerun was made.
+
 The direct dependency configuration remains `serde 1.0.229`, `serde_json 1.0.154` (including existing `std` and `arbitrary_precision` features), `base64 0.23.1`, and `time 0.3.55`; no dependency, feature, Cargo manifest, or Cargo.lock change was made. The effective `vault-format` feature graph was inspected offline and showed only the existing approved features. Cargo.lock's SHA-256 remained `8718BAF81D753669F35C348C3D5248489879C639EC60CA8639EF11FFD409F9A2`. Rust 1.95 has not been installed or run; direct MSRV validation remains **UNVERIFIED**.
 
 ## Deferred findings and later gates
@@ -157,6 +165,6 @@ This milestone does not resolve OQ-03, OQ-04, or OQ-06. OQ-07 remains assigned t
 
 ## Publication and review gate
 
-The implementation commit is on the existing `dev` branch locally; publication remains pending. This documentation update will be the next coherent commit, after which the approved outgoing diff must be fetched/reconciled and reviewed before a normal non-forced push. `main` must remain at the starting baseline. Hosted Windows Rust CI must be checked for the exact final `dev` SHA, including verification that the large boundary test ran; a prior `main` or different-SHA run is not evidence for this change.
+The implementation and initial validation record are published on the existing `dev` branch. This post-run evidence update is the next documentation-only commit. After it is pushed, the exact new `dev` SHA must receive its own normal hosted Windows Rust CI run, including the large-boundary test; run 42100435684 is evidence for `ecd1bf...`, not for the later document commit. `main` remains at the starting baseline.
 
-After hosted CI passes, this implementation is ready for independent Claude Code review from baseline `438b17a168eef88e067613796821c991086901f9` through the exact published `dev` SHA. Review should focus on early-rejection safety, complete accepted-document validation, exact number semantics, Base64 canonicality and escaped chunk carry, allocation ordering and overflow, category limits, sanitized diagnostics, and preservation of the Phase 2A-2 header contract. Independent review and owner approval are still required before any `main` integration. Phase 2A-4 and Phase 2A-5 remain unauthorized.
+After hosted CI passes for the final documentation commit's exact SHA, this implementation is ready for independent Claude Code review from baseline `438b17a168eef88e067613796821c991086901f9` through that exact published `dev` SHA. Review should focus on early-rejection safety, complete accepted-document validation, exact number semantics, Base64 canonicality and escaped chunk carry, allocation ordering and overflow, category limits, sanitized diagnostics, and preservation of the Phase 2A-2 header contract. Independent review and owner approval are still required before any `main` integration. Phase 2A-4 and Phase 2A-5 remain unauthorized.
