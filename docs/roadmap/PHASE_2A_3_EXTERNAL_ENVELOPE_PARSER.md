@@ -3,6 +3,7 @@
 **Status:** Implementation complete locally; dev publication and exact-SHA hosted CI pending
 **Recorded:** 2026-11-05
 **Starting baseline:** `438b17a168eef88e067613796821c991086901f9` on `main` and `dev`
+**Implementation commit:** `e13e5ed22475e22c2641a86c8d994878427868c7` (parent: `438b17a168eef88e067613796821c991086901f9`)
 **Authorization:** Owner-approved implementation of structural parsing for encrypted user-registry and account-manifest envelopes. This record does not authorize integration into `main`, Phase 2A-4, or Phase 2A-5.
 
 ## Scope and trust boundary
@@ -135,7 +136,14 @@ The complete local gates passed as follows:
 | Native PE dependency inventory | PASS; 27 observed PE imports per executable |
 | `git diff --check` | PASS |
 
-The first local Windows Release run used `phase-2a-3-local-precommit-20261105`; its build manifest correctly recorded the starting Git SHA and `dirty=true` because implementation files were uncommitted. It produced a verified manifest and dependency inventory, but those executables are not represented as a clean committed-build identity. The release boundary test above was run separately and passed. The two junction/reparse-point subcases could not run locally because this Windows environment denied junction creation; they remain BLOCKED locally, not passed. Hosted Windows CI must provide separate evidence for them.
+The first local Windows Release run used `phase-2a-3-local-precommit-20261105`; its build manifest correctly recorded the starting Git SHA and `dirty=true` because implementation files were uncommitted. It produced a verified manifest and dependency inventory, but those executables are not represented as a clean committed-build identity. After the implementation commit, clean Release run `phase-2a-3-e13e5ed-clean` recorded source SHA `e13e5ed22475e22c2641a86c8d994878427868c7` and `dirty=false`. Both isolated variants and the native dependency inventory verified:
+
+| Variant | Size | Raw executable SHA-256 | Observed PE imports |
+|---|---:|---|---:|
+| Shell | 14,875,648 bytes | `E2254C5F67D933BF0E8016B88BF646AAD306F209F76FB288557A9B51F403E9EF` | 27 |
+| Design preview | 15,535,616 bytes | `3146CC74A2F433CA8BA62B2FB4EAA6E8F827A101048035ED1C114BDF5FD31179` | 27 |
+
+The inventory reported 377 Cargo.lock package records and 161 Windows-resolved packages for each configuration. The build manifest records linker detection but does not prove linker invocation (`usage_proven=false`). These are local build observations, not reproducibility, clean-host, runtime-redistribution, installer, or release certification. The release boundary test above was run separately and passed. The two junction/reparse-point subcases could not run locally because this Windows environment denied junction creation; they remain BLOCKED locally, not passed. Hosted Windows CI must provide separate evidence for them.
 
 The repository's `.git` metadata required one-command `safe.directory` overrides due directory ownership; no global Git setting was changed. Git emitted line-ending normalization warnings on modified LF working copies, while `diff --numstat` showed localized edits rather than whole-file newline churn; no whole-file line-ending churn was observed.
 
@@ -149,6 +157,6 @@ This milestone does not resolve OQ-03, OQ-04, or OQ-06. OQ-07 remains assigned t
 
 ## Publication and review gate
 
-At the time this document was drafted, the implementation is still uncommitted and unpublished. The planned publication is limited to coherent commits on the existing `dev` branch and a normal non-forced push after all local checks and outgoing-diff review. `main` must remain at the starting baseline. Hosted Windows Rust CI must be checked for the exact final `dev` SHA, including verification that the large boundary test ran; a prior `main` or different-SHA run is not evidence for this change.
+The implementation commit is on the existing `dev` branch locally; publication remains pending. This documentation update will be the next coherent commit, after which the approved outgoing diff must be fetched/reconciled and reviewed before a normal non-forced push. `main` must remain at the starting baseline. Hosted Windows Rust CI must be checked for the exact final `dev` SHA, including verification that the large boundary test ran; a prior `main` or different-SHA run is not evidence for this change.
 
 After hosted CI passes, this implementation is ready for independent Claude Code review from baseline `438b17a168eef88e067613796821c991086901f9` through the exact published `dev` SHA. Review should focus on early-rejection safety, complete accepted-document validation, exact number semantics, Base64 canonicality and escaped chunk carry, allocation ordering and overflow, category limits, sanitized diagnostics, and preservation of the Phase 2A-2 header contract. Independent review and owner approval are still required before any `main` integration. Phase 2A-4 and Phase 2A-5 remain unauthorized.
