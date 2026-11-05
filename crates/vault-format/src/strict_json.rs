@@ -104,9 +104,9 @@ fn exact_u64(number: &str) -> Result<u64, ExactNumberError> {
         Some(unsigned) => (true, unsigned),
         None => (false, number),
     };
-    let (mantissa, exponent) = match unsigned.find(['e', 'E']) {
-        Some(index) => (&unsigned[..index], parse_exponent(&unsigned[index + 1..])?),
-        None => (unsigned, 0),
+    let (mantissa, exponent_text) = match unsigned.find(['e', 'E']) {
+        Some(index) => (&unsigned[..index], Some(&unsigned[index + 1..])),
+        None => (unsigned, None),
     };
     let (whole, fraction) = match mantissa.find('.') {
         Some(index) => (&mantissa[..index], &mantissa[index + 1..]),
@@ -116,6 +116,16 @@ fn exact_u64(number: &str) -> Result<u64, ExactNumberError> {
         .len()
         .checked_add(fraction.len())
         .ok_or(ExactNumberError::OutOfRange)?;
+    // A larger exponent is already decisive for every nonzero mantissa: positive values
+    // append more than u64's maximum decimal width, while negative values require removing
+    // more digits than the mantissa contains. Derive the bound from this token's actual size.
+    let exponent_limit = total_digits
+        .checked_add(U64_MAX_DECIMAL_DIGITS + 1)
+        .ok_or(ExactNumberError::OutOfRange)?;
+    let exponent = match exponent_text {
+        Some(exponent) => parse_exponent(exponent, exponent_limit)?,
+        None => 0,
+    };
     let first_nonzero = whole.bytes().position(|byte| byte != b'0').or_else(|| {
         fraction
             .bytes()
@@ -125,7 +135,7 @@ fn exact_u64(number: &str) -> Result<u64, ExactNumberError> {
     let Some(first_nonzero) = first_nonzero else {
         return Ok(0);
     };
-    let fraction_len = i64::try_from(fraction.len()).map_err(|_| ExactNumberError::OutOfRange)?;
+    let fraction_len = i128::try_from(fraction.len()).map_err(|_| ExactNumberError::OutOfRange)?;
     let scale = fraction_len
         .checked_sub(exponent)
         .ok_or(ExactNumberError::OutOfRange)?;
@@ -150,7 +160,7 @@ fn exact_u64(number: &str) -> Result<u64, ExactNumberError> {
         if significant_len
             .checked_add(appended_zeroes)
             .ok_or(ExactNumberError::OutOfRange)?
-            > 20
+            > U64_MAX_DECIMAL_DIGITS
         {
             return Err(ExactNumberError::OutOfRange);
         }
@@ -166,6 +176,8 @@ fn exact_u64(number: &str) -> Result<u64, ExactNumberError> {
     }
     Ok(magnitude)
 }
+
+const U64_MAX_DECIMAL_DIGITS: usize = 20;
 
 fn concatenated_digit(whole: &str, fraction: &str, index: usize) -> u8 {
     if index < whole.len() {
@@ -191,7 +203,7 @@ fn parse_concatenated_digits(
     })
 }
 
-fn parse_exponent(exponent: &str) -> Result<i64, ExactNumberError> {
+fn parse_exponent(exponent: &str, saturation_bound: usize) -> Result<i128, ExactNumberError> {
     let (negative, digits) = if let Some(digits) = exponent.strip_prefix('-') {
         (true, digits)
     } else if let Some(digits) = exponent.strip_prefix('+') {
@@ -204,18 +216,21 @@ fn parse_exponent(exponent: &str) -> Result<i64, ExactNumberError> {
         return Ok(0);
     }
 
-    // Values beyond this cap are already outside the u64 precision/range of any nonzero field.
-    let mut value = 0_i64;
+    let mut magnitude = 0_usize;
     for byte in digits.bytes() {
         if !byte.is_ascii_digit() {
-            return Err(ExactNumberError::OutOfRange);
+            return Err(ExactNumberError::Invalid);
         }
-        value = value
-            .saturating_mul(10)
-            .saturating_add(i64::from(byte - b'0'))
-            .min(1_000_000);
+        if magnitude < saturation_bound {
+            magnitude = magnitude
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(usize::from(byte - b'0')))
+                .unwrap_or(saturation_bound)
+                .min(saturation_bound);
+        }
     }
-    Ok(if negative { -value } else { value })
+    let magnitude = i128::try_from(magnitude).map_err(|_| ExactNumberError::OutOfRange)?;
+    Ok(if negative { -magnitude } else { magnitude })
 }
 
 impl StrictDocument {

@@ -17,6 +17,38 @@ fn envelope(version: &str, algorithm: &str, nonce: &str, ciphertext: &str) -> St
     )
 }
 
+fn registry_envelope_with_version_parts(
+    version_prefix: &[u8],
+    zero_count: usize,
+    version_suffix: &[u8],
+) -> Vec<u8> {
+    const PREFIX: &[u8] = b"{\"version\":";
+    const SUFFIX: &[u8] = b",\"algorithm\":\"AES/GCM/NoPadding\",\"nonce\":\"AAAAAAAAAAAAAAAA\",\"ciphertext\":\"AAAAAAAAAAAAAAAAAAAAAA==\"}";
+    let capacity =
+        PREFIX.len() + version_prefix.len() + zero_count + version_suffix.len() + SUFFIX.len();
+    let mut input = Vec::with_capacity(capacity);
+    input.extend_from_slice(PREFIX);
+    input.extend_from_slice(version_prefix);
+    input.resize(input.len() + zero_count, b'0');
+    input.extend_from_slice(version_suffix);
+    input.extend_from_slice(SUFFIX);
+    input
+}
+
+fn registry_envelope_with_version(version: &str) -> String {
+    valid_envelope_with_len(16).replace("\"version\":1", &format!("\"version\":{version}"))
+}
+
+fn synthetic_bytes(length: usize) -> Vec<u8> {
+    (0..length)
+        .map(|index| (index.wrapping_mul(73).wrapping_add(index >> 8) & 0xFF) as u8)
+        .collect()
+}
+
+fn gson_escape_base64_padding(encoded: &str) -> String {
+    encoded.replace('=', r"\u003d")
+}
+
 fn valid_envelope_with_len(ciphertext_len: usize) -> String {
     let ciphertext = vec![0_u8; ciphertext_len];
     envelope("1", ALGORITHM, &b64(&NONCE), &b64(&ciphertext))
@@ -109,6 +141,106 @@ fn a03_a04_b17_accepts_reordered_fields_whitespace_escapes_and_exact_numeric_one
             "{version}"
         );
     }
+}
+
+#[test]
+fn exact_exponents_remain_correct_beyond_the_old_saturation_limit() {
+    // The old 1,000,000 cap changed these values into different mathematical numbers.
+    let positive_false_positive =
+        registry_envelope_with_version_parts(b"0.", 999_999, b"1e2000000");
+    let positive_outcome = parse_encrypted_user_registry(&positive_false_positive).map(|_| ());
+    drop(positive_false_positive);
+
+    let negative_false_positive =
+        registry_envelope_with_version_parts(b"1", 1_000_000, b"e-2000000");
+    let negative_outcome = parse_encrypted_user_registry(&negative_false_positive).map(|_| ());
+    drop(negative_false_positive);
+
+    let exact_large_cancellation =
+        registry_envelope_with_version_parts(b"1", 1_500_000, b"e-1500000");
+    let exact_outcome =
+        parse_encrypted_user_registry(&exact_large_cancellation).map(|parsed| parsed.version());
+    assert_eq!(
+        (positive_outcome, negative_outcome, exact_outcome),
+        (
+            Err(ExternalEnvelopeParseError::VersionOutOfRange),
+            Err(ExternalEnvelopeParseError::NonIntegralVersion),
+            Ok(1),
+        )
+    );
+}
+
+#[test]
+fn exact_number_boundaries_and_extreme_exponents_are_classified_mathematically() {
+    for version in ["1", "1.0", "1e0", "1.00e+0", "0.1e1", "100e-2"] {
+        let input = registry_envelope_with_version(version);
+        let parsed = parse_encrypted_user_registry(input.as_bytes())
+            .unwrap_or_else(|error| panic!("{version} must equal version one: {error:?}"));
+        assert_eq!(parsed.version(), 1, "{version}");
+    }
+
+    for (version, expected) in [
+        ("-0", ExternalEnvelopeParseError::InvalidVersion),
+        ("1e1000000", ExternalEnvelopeParseError::VersionOutOfRange),
+        ("1e-1000000", ExternalEnvelopeParseError::NonIntegralVersion),
+        ("1e1000001", ExternalEnvelopeParseError::VersionOutOfRange),
+        ("1e-1000001", ExternalEnvelopeParseError::NonIntegralVersion),
+        (
+            "1e999999999999999999999999999999999999999999999999",
+            ExternalEnvelopeParseError::VersionOutOfRange,
+        ),
+        (
+            "1e-999999999999999999999999999999999999999999999999",
+            ExternalEnvelopeParseError::NonIntegralVersion,
+        ),
+        (
+            "18446744073709551615",
+            ExternalEnvelopeParseError::UnsupportedVersion,
+        ),
+        (
+            "18446744073709551616",
+            ExternalEnvelopeParseError::VersionOutOfRange,
+        ),
+        (
+            "184467440737095516150e-1",
+            ExternalEnvelopeParseError::UnsupportedVersion,
+        ),
+        (
+            "184467440737095516160e-1",
+            ExternalEnvelopeParseError::VersionOutOfRange,
+        ),
+        (
+            "0e999999999999999999999",
+            ExternalEnvelopeParseError::InvalidVersion,
+        ),
+        (
+            "0e-999999999999999999999",
+            ExternalEnvelopeParseError::InvalidVersion,
+        ),
+        (
+            "-0e-999999999999999999999",
+            ExternalEnvelopeParseError::InvalidVersion,
+        ),
+        ("1e+", ExternalEnvelopeParseError::InvalidJson),
+    ] {
+        let input = registry_envelope_with_version(version);
+        assert_eq!(user_error(input.as_bytes()), expected, "{version}");
+    }
+
+    let cancelling_mantissa = registry_envelope_with_version(&format!("1{}e-400", "0".repeat(400)));
+    assert_eq!(
+        parse_encrypted_user_registry(cancelling_mantissa.as_bytes())
+            .expect("long mantissa with fully cancelling scale is one")
+            .version(),
+        1
+    );
+    let partially_cancelling_mantissa =
+        registry_envelope_with_version(&format!("1{}e-400", "0".repeat(401)));
+    assert_eq!(
+        user_error(partially_cancelling_mantissa.as_bytes()),
+        ExternalEnvelopeParseError::UnsupportedVersion,
+        "the exact value is ten, not a rounded or saturated one"
+    );
 }
 
 #[test]
@@ -435,6 +567,127 @@ fn d09_e_scanner_decodes_escaped_base64_without_changing_its_value() {
     let mut expected = boundary_ciphertext;
     expected.extend_from_slice(&[0; 1]);
     assert_eq!(parsed.ciphertext_and_tag(), expected);
+}
+
+#[test]
+fn gson_style_lowercase_padding_escapes_decode_to_the_original_synthetic_bytes() {
+    for (length, expected_padding) in [(15, 0), (16, 2), (17, 1), (1_000, 2), (1_001, 1)] {
+        let ciphertext = synthetic_bytes(length);
+        let encoded = b64(&ciphertext);
+        assert_eq!(encoded.matches('=').count(), expected_padding);
+        let escaped = gson_escape_base64_padding(&encoded);
+        if expected_padding != 0 {
+            assert!(escaped.contains(r"\u003d"));
+            assert!(!escaped.contains(r"\u003D"));
+        }
+        let input = envelope("1", ALGORITHM, &b64(&NONCE), &escaped);
+
+        if length < 16 {
+            assert_eq!(
+                user_error(input.as_bytes()),
+                ExternalEnvelopeParseError::CiphertextTooShort
+            );
+        } else {
+            let parsed = parse_encrypted_user_registry(input.as_bytes())
+                .expect("Gson-style escaped padding must decode canonically");
+            assert_eq!(parsed.nonce(), &NONCE);
+            assert_eq!(parsed.ciphertext_and_tag(), ciphertext);
+        }
+    }
+
+    let ciphertext = synthetic_bytes(262_145);
+    let encoded = b64(&ciphertext);
+    let escaped = gson_escape_base64_padding(&encoded);
+    assert!(escaped.contains(r"\u003d"));
+    let input = envelope("1", ALGORITHM, &b64(&NONCE), &escaped);
+    let parsed = parse_encrypted_account_manifest(input.as_bytes())
+        .expect("larger Gson-style escaped ciphertext must cross decoder staging chunks");
+    assert_eq!(parsed.nonce(), &NONCE);
+    assert_eq!(parsed.ciphertext_and_tag(), ciphertext);
+}
+
+#[test]
+fn unescaped_base64_round_trips_at_decoder_chunk_boundaries() {
+    for encoded_length in [4_088, 4_092, 4_096, 8_184, 8_188, 8_192] {
+        let groups = encoded_length / 4;
+        for payload_remainder in [1, 2, 3] {
+            let payload_len = (groups - 1) * 3 + payload_remainder;
+            let ciphertext = synthetic_bytes(payload_len);
+            let encoded = b64(&ciphertext);
+            assert_eq!(encoded.len(), encoded_length);
+            let input = envelope("1", ALGORITHM, &b64(&NONCE), &encoded);
+            let parsed = parse_encrypted_user_registry(input.as_bytes())
+                .expect("canonical Base64 at a chunk boundary must parse");
+            assert_eq!(parsed.ciphertext_and_tag(), ciphertext);
+        }
+    }
+}
+
+#[test]
+fn unescaped_base64_rejects_invalid_padding_characters_and_pad_bits_at_boundaries() {
+    let ciphertext = synthetic_bytes(6_144);
+    let encoded = b64(&ciphertext);
+    assert_eq!(encoded.len(), 8_192);
+
+    let mut invalid_symbol = encoded.clone().into_bytes();
+    invalid_symbol[4_088] = b'!';
+    let input = envelope(
+        "1",
+        ALGORITHM,
+        &b64(&NONCE),
+        std::str::from_utf8(&invalid_symbol).unwrap(),
+    );
+    assert_eq!(
+        user_error(input.as_bytes()),
+        ExternalEnvelopeParseError::InvalidBase64(ExternalEnvelopeField::Ciphertext)
+    );
+
+    let mut early_padding = encoded.clone().into_bytes();
+    early_padding[4_088] = b'=';
+    let input = envelope(
+        "1",
+        ALGORITHM,
+        &b64(&NONCE),
+        std::str::from_utf8(&early_padding).unwrap(),
+    );
+    assert_eq!(
+        user_error(input.as_bytes()),
+        ExternalEnvelopeParseError::InvalidBase64(ExternalEnvelopeField::Ciphertext)
+    );
+
+    let padded_ciphertext = synthetic_bytes(6_142);
+    let mut noncanonical = b64(&padded_ciphertext).into_bytes();
+    assert_eq!(noncanonical.len(), 8_192);
+    assert_eq!(&noncanonical[8_190..], b"==");
+    noncanonical[8_189] = b'B';
+    let input = envelope(
+        "1",
+        ALGORITHM,
+        &b64(&NONCE),
+        std::str::from_utf8(&noncanonical).unwrap(),
+    );
+    assert_eq!(
+        user_error(input.as_bytes()),
+        ExternalEnvelopeParseError::InvalidBase64(ExternalEnvelopeField::Ciphertext)
+    );
+}
+
+#[test]
+fn escaped_and_unescaped_gson_forms_decode_identically_across_staging_boundaries() {
+    let ciphertext = synthetic_bytes(262_145);
+    let encoded = b64(&ciphertext);
+    let unescaped_input = envelope("1", ALGORITHM, &b64(&NONCE), &encoded);
+    let escaped = gson_escape_base64_padding(&encoded);
+    assert!(escaped.len() > 4_093);
+    let escaped_input = envelope("1", ALGORITHM, &b64(&NONCE), &escaped);
+
+    let unescaped = parse_encrypted_user_registry(unescaped_input.as_bytes())
+        .expect("unescaped canonical synthetic bytes should parse");
+    let escaped = parse_encrypted_user_registry(escaped_input.as_bytes())
+        .expect("Gson-escaped canonical synthetic bytes should parse");
+    assert_eq!(unescaped.ciphertext_and_tag(), ciphertext);
+    assert_eq!(escaped.ciphertext_and_tag(), ciphertext);
+    assert_eq!(unescaped.ciphertext_and_tag(), escaped.ciphertext_and_tag());
 }
 
 #[test]

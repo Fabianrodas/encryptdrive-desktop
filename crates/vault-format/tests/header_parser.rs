@@ -272,6 +272,25 @@ fn accepts_exact_integer_decimal_and_exponent_forms_for_version_and_kdf_fields()
 }
 
 #[test]
+fn preserves_negative_zero_policy_for_header_version_and_kdf_values() {
+    let version = replace_once(
+        &valid_header(),
+        r#""formatVersion":1"#,
+        r#""formatVersion":-0"#,
+    );
+    assert_eq!(
+        parse_error(version.as_bytes()),
+        HeaderParseError::InvalidFormatVersion
+    );
+
+    let iterations = replace_once(&valid_header(), r#""iterations":3"#, r#""iterations":-0"#);
+    assert_eq!(
+        parse_error(iterations.as_bytes()),
+        HeaderParseError::InvalidKdfParameters("iterations")
+    );
+}
+
+#[test]
 fn rejects_fractional_negative_overflow_and_extreme_exponents_without_rounding() {
     for (number, expected) in [
         ("1.5", HeaderParseError::NonIntegralNumber("formatVersion")),
