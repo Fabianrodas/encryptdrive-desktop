@@ -1,4 +1,5 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use vault_format::{HeaderParseError, InputKind, VAULT_JSON_MAX_BYTES, parse_vault_header};
 
 const VALID_KDF: &str = r#"{"algorithm":"Argon2id","memoryKiB":65536,"iterations":3,"parallelism":1,"salt":"AAAAAAAAAAAAAAAAAAAAAA=="}"#;
@@ -416,6 +417,39 @@ fn accepts_canonical_utc_timestamps_and_rejects_normalized_alternatives() {
 }
 
 #[test]
+fn rejects_leap_seconds_before_time_library_normalization() {
+    for timestamp in [
+        "2016-12-31T23:59:60Z",
+        "2016-12-31T23:59:60.5Z",
+        "2026-11-30T23:59:60Z",
+        "2026-11-30T23:59:60.5Z",
+        "2026-06-30T23:59:60Z",
+        "2026-11-04T23:59:60Z",
+        "2026-11-30T23:59:61Z",
+        "2026-11-30T23:59:99Z",
+    ] {
+        let input = replace_once(&valid_header(), "2026-11-04T21:47:07Z", timestamp);
+        assert_eq!(
+            parse_error(input.as_bytes()),
+            HeaderParseError::InvalidTimestamp,
+            "{timestamp}"
+        );
+    }
+}
+
+#[test]
+fn accepts_the_valid_second_before_minute_end_and_month_end() {
+    for timestamp in [
+        "2016-12-31T23:59:59Z",
+        "2016-12-31T23:59:59.999999999Z",
+        "2026-11-30T23:59:59Z",
+    ] {
+        let input = replace_once(&valid_header(), "2026-11-04T21:47:07Z", timestamp);
+        assert!(parse_vault_header(input.as_bytes()).is_ok(), "{timestamp}");
+    }
+}
+
+#[test]
 fn validates_kdf_ranges_with_checked_boundaries() {
     for (parallelism, memory, iterations, valid) in [
         (1, 7, 1, false),
@@ -793,6 +827,88 @@ fn diagnostics_and_debug_never_echo_untrusted_json_base64_or_ciphertext() {
     let parsed = parse_vault_header(valid_header().as_bytes()).unwrap();
     let rendered = format!("{parsed:?}");
     assert!(!rendered.contains("AAAAAAAA"));
+}
+
+#[test]
+fn debug_output_redacts_vault_identifier_timestamp_and_cryptographic_bytes() {
+    let vault_id = "deadbeef-cafe-4bad-8dad-0123456789ab";
+    let timestamp = "2026-10-29T13:14:15.123456789Z";
+    let salt: [u8; 16] = std::array::from_fn(|index| 0xA0 + index as u8);
+    let nonce: [u8; 12] = std::array::from_fn(|index| 0x40 + index as u8);
+    let ciphertext: [u8; 48] = std::array::from_fn(|index| 0x80 + index as u8);
+
+    let mut input = replace_once(
+        &valid_header(),
+        "550e8400-e29b-41d4-a716-446655440000",
+        vault_id,
+    );
+    input = replace_once(&input, "2026-11-04T21:47:07Z", timestamp);
+    input = replace_once(&input, "AAAAAAAAAAAAAAAAAAAAAA==", &b64(&salt));
+    input = replace_once(&input, "AAAAAAAAAAAAAAAA", &b64(&nonce));
+    input = replace_once(
+        &input,
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        &b64(&ciphertext),
+    );
+
+    let parsed = parse_vault_header(input.as_bytes()).expect("synthetic header should parse");
+    let parsed_debug = format!("{parsed:?}");
+    let vault_id_debug = format!("{:?}", parsed.vault_id());
+    let vault_id_bytes_debug = format!("{:?}", parsed.vault_id().as_bytes());
+    let kdf_debug = format!("{:?}", parsed.kdf());
+    let envelope_debug = format!("{:?}", parsed.wrapped_registry_key());
+
+    for rendered in [&parsed_debug, &vault_id_debug, &kdf_debug, &envelope_debug] {
+        assert!(
+            !rendered.contains(vault_id),
+            "debug leaked the UUID: {rendered}"
+        );
+        assert!(
+            !rendered.contains("deadbeef") && !rendered.contains("0123456789ab"),
+            "debug leaked recognizable UUID text: {rendered}"
+        );
+        assert!(
+            !rendered.contains(&vault_id_bytes_debug),
+            "debug leaked raw UUID bytes: {rendered}"
+        );
+        assert!(
+            !rendered.contains("2026"),
+            "debug leaked the timestamp: {rendered}"
+        );
+        assert!(
+            !rendered.contains(&b64(&salt))
+                && !rendered.contains(&b64(&nonce))
+                && !rendered.contains(&b64(&ciphertext)),
+            "debug leaked encoded cryptographic bytes: {rendered}"
+        );
+        assert!(
+            !rendered.contains(&format!("{salt:?}"))
+                && !rendered.contains(&format!("{nonce:?}"))
+                && !rendered.contains(&format!("{ciphertext:?}")),
+            "debug leaked raw cryptographic bytes: {rendered}"
+        );
+    }
+
+    assert!(parsed_debug.contains("ParsedUnauthenticatedVaultHeader"));
+    assert!(parsed_debug.contains("format_version: 1"));
+    assert!(parsed_debug.contains("salt_bytes: 16"));
+    assert!(parsed_debug.contains("nonce_bytes: 12"));
+    assert!(parsed_debug.contains("ciphertext_bytes: 48"));
+    assert!(vault_id_debug.contains("VaultId"));
+    assert_eq!(parsed.vault_id().to_string(), vault_id);
+    assert_eq!(
+        parsed.vault_id().as_bytes(),
+        &[
+            0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0x4B, 0xAD, 0x8D, 0xAD, 0x01, 0x23, 0x45, 0x67,
+            0x89, 0xAB
+        ]
+    );
+    assert_eq!(
+        parsed.created_at().unix_timestamp_nanos(),
+        OffsetDateTime::parse(timestamp, &Rfc3339)
+            .expect("test timestamp should parse")
+            .unix_timestamp_nanos()
+    );
 }
 
 #[test]

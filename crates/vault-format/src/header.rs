@@ -63,8 +63,8 @@ impl fmt::Debug for ParsedUnauthenticatedVaultHeader {
         formatter
             .debug_struct("ParsedUnauthenticatedVaultHeader")
             .field("format_version", &self.format_version())
-            .field("vault_id", &self.vault_id)
-            .field("created_at", &self.created_at)
+            .field("vault_id", &"[REDACTED]")
+            .field("created_at", &"[REDACTED]")
             .field("kdf", &self.kdf)
             .field("wrapped_registry_key", &self.wrapped_registry_key)
             .finish()
@@ -97,8 +97,8 @@ impl fmt::Display for VaultId {
 impl fmt::Debug for VaultId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_tuple("VaultId")
-            .field(&self.to_string())
+            .debug_struct("VaultId")
+            .field("redacted", &true)
             .finish()
     }
 }
@@ -526,6 +526,14 @@ fn has_canonical_utc_timestamp_shape(text: &str) -> bool {
         .iter()
         .all(|range| bytes[range.clone()].iter().all(u8::is_ascii_digit))
     {
+        return false;
+    }
+
+    let Some(second_digits) = bytes.get(17..19) else {
+        return false;
+    };
+    let seconds = (second_digits[0] - b'0') * 10 + (second_digits[1] - b'0');
+    if seconds > 59 {
         return false;
     }
 
