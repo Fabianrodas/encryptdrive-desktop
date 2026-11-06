@@ -18,6 +18,100 @@ jobs:
         with:
           components: clippy, rustfmt
           targets: x86_64-pc-windows-msvc
+      - name: Set up Oracle JDK 21.0.2 x64
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: oracle
+          java-version: '21.0.2'
+          java-package: jdk
+          architecture: x64
+          force-download: true
+      - name: Verify Oracle JDK runtime identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:JAVA_HOME)) {
+            throw 'JAVA_HOME was not configured by actions/setup-java.'
+          }
+
+          $javaHome = [System.IO.Path]::GetFullPath($env:JAVA_HOME).TrimEnd('\')
+          $javaExe = [System.IO.Path]::GetFullPath((Join-Path $javaHome 'bin\java.exe'))
+          if (-not (Test-Path -LiteralPath $javaExe -PathType Leaf)) {
+            throw 'The configured JDK executable is missing under JAVA_HOME.'
+          }
+
+          $pathJavaExe = [System.IO.Path]::GetFullPath((Get-Command java.exe -ErrorAction Stop).Source)
+          if (-not [System.StringComparer]::OrdinalIgnoreCase.Equals($pathJavaExe, $javaExe)) {
+            throw 'PATH java.exe does not resolve to JAVA_HOME\bin\java.exe.'
+          }
+
+          $runtimeLines = @(& $javaExe '-XshowSettings:properties' '-version' 2>&1)
+          if ($LASTEXITCODE -ne 0) {
+            throw "Oracle JDK property query failed with exit code $LASTEXITCODE."
+          }
+
+          $runtimeProperties = @{}
+          foreach ($line in $runtimeLines) {
+            if ($line -match '^\s*([A-Za-z0-9_.]+)\s*=\s*(.*?)\s*$') {
+              $runtimeProperties[$Matches[1]] = $Matches[2]
+            }
+          }
+
+          $expectedRuntime = [ordered]@{
+            'java.home' = $javaHome
+            'java.vendor' = 'Oracle Corporation'
+            'java.version' = '21.0.2'
+            'java.runtime.version' = '21.0.2+13-LTS-58'
+            'os.arch' = 'amd64'
+            'sun.arch.data.model' = '64'
+          }
+          foreach ($property in $expectedRuntime.GetEnumerator()) {
+            if (-not $runtimeProperties.ContainsKey($property.Key) -or
+                $runtimeProperties[$property.Key] -cne $property.Value) {
+              throw "Oracle JDK runtime property '$($property.Key)' did not match the approved value '$($property.Value)'."
+            }
+          }
+
+          $releasePath = Join-Path $javaHome 'release'
+          if (-not (Test-Path -LiteralPath $releasePath -PathType Leaf)) {
+            throw 'The configured JDK release metadata file is missing.'
+          }
+          $releaseProperties = @{}
+          foreach ($line in Get-Content -LiteralPath $releasePath) {
+            if ($line -match '^([A-Z_]+)="(.*)"$') {
+              $releaseProperties[$Matches[1]] = $Matches[2]
+            }
+          }
+          $expectedRelease = [ordered]@{
+            IMPLEMENTOR = 'Oracle Corporation'
+            JAVA_VERSION = '21.0.2'
+            JAVA_RUNTIME_VERSION = '21.0.2+13-LTS-58'
+            OS_ARCH = 'x86_64'
+          }
+          foreach ($property in $expectedRelease.GetEnumerator()) {
+            if (-not $releaseProperties.ContainsKey($property.Key) -or
+                $releaseProperties[$property.Key] -cne $property.Value) {
+              throw "JDK release metadata '$($property.Key)' did not match the approved value '$($property.Value)'."
+            }
+          }
+
+          Write-Output 'Runtime vendor: Oracle Corporation'
+          Write-Output 'Runtime version: 21.0.2+13-LTS-58'
+          Write-Output 'Runtime architecture: Windows x64'
+          & $javaExe '--version'
+          if ($LASTEXITCODE -ne 0) {
+            throw "Oracle JDK version diagnostic failed with exit code $LASTEXITCODE."
+          }
+          Write-Output 'Oracle JDK runtime identity verified.'
+      - name: Run Oracle JDK Unicode differential oracle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./scripts/verify-java-unicode-compat.ps1
+          if ($LASTEXITCODE -ne 0) {
+            throw "Java Unicode differential script exited with status $LASTEXITCODE."
+          }
+          Write-Output 'Unicode differential mismatches: 0 (oracle script returned success).'
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Check workspace
