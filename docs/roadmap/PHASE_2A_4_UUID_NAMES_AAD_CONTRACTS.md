@@ -1,16 +1,29 @@
 # Phase 2A-4 — UUID, Logical-Name and AAD Contracts
 
-**Status:** Implemented on `dev`; exact-SHA hosted CI, independent Claude review and owner disposition are pending. This record does not authorize integration into `main`.
-**Recorded:** 2026-11-05
-**Starting baseline:** `9beb0b7ebb3cd84b88e16b454f41e526304c29f1` on `main` and `dev`
+**Status:** PHASE 2A-4 INTEGRATED — MAIN CI VERIFIED. At the approved integration baseline, `main` and `dev` both pointed to `d035c746a97ab26a5081965d7e2a78d9021328d5` after a strict fast-forward. This milestone is not equivalent to full VF1 conformance or Windows release readiness.
+**Recorded:** 2026-11-05 (original milestone record; preserved)
+**Status updated:** 2026-11-06
+**Initial baseline:** `9beb0b7ebb3cd84b88e16b454f41e526304c29f1` on `main` and `dev`
+**Integrated SHA:** `d035c746a97ab26a5081965d7e2a78d9021328d5`
 **Authorization:** Owner-approved Phase 2A-4 implementation of canonical identifiers, Java-compatible logical-name rules and pure AAD byte construction. No Phase 2A-5/2A-6 scope is included.
 **Implementation commits:** `8c800e366e978f78d948c45227219b5e0abdccef` (typed IDs and Java-compatible names); `2392128269bc9a1bb74da1fa3807dafd285f996a` (AAD and architecture boundary).
+
+## Integration record
+
+The initial baseline above is the pre-Phase 2A-4 commit, not the integrated result. The four Phase 2A-4 commits form the linear history from that baseline:
+
+1. `8c800e366e978f78d948c45227219b5e0abdccef` — `feat(vault-format): add canonical identifiers and Java-compatible names`
+2. `2392128269bc9a1bb74da1fa3807dafd285f996a` — `feat(vault-crypto): add typed VF1 AAD byte constructors`
+3. `00e09658bb2ad2b8fee4a027ed5157da44cf65d1` — `docs(roadmap): record Phase 2A-4 contracts`
+4. `d035c746a97ab26a5081965d7e2a78d9021328d5` — `ci: enforce Oracle JDK 21.0.2 Unicode differential gate`
+
+The fourth commit is the integrated Phase 2A-4 SHA. The approved integration advanced `main` by strict fast-forward; at the verified baseline, both `main` and `dev` pointed to that SHA.
 
 ## Scope and trust boundary
 
 This milestone adds canonical UUID types and creation/rename-compatible logical-name utilities to `vault-format`, plus six pure AAD byte constructors to `vault-crypto`. The name functions operate on caller-supplied UTF-8 text and do not parse or validate stored manifest data. The AAD functions return fixed-size byte arrays only; they do not hash, authenticate, encrypt, decrypt, derive keys or wrap keys.
 
-No plaintext registry or manifest parser, metadata relationship validation, tree operation, filesystem or storage behavior, authentication, UUID generation, password/key handling, real vault operation, GUI change or cryptographic algorithm was added. No Java source, private documentation or Java fixture was modified, copied or committed. All vectors are synthetic.
+No plaintext registry or manifest parser, metadata relationship validation, tree operation, filesystem or storage behavior, authentication, UUID generation, password/key handling, real vault operation, GUI change or cryptographic algorithm was added. The original EncryptDrive Java application was not modified; private Java documentation and private Java fixtures were not copied or modified. The synthetic helper `scripts/unicode-compat/JavaUnicodeOracle.java` was added to this Rust repository. It uses public Java APIs to emit deterministic compatibility-test evidence. All vectors are synthetic.
 
 ## Frozen decision compliance
 
@@ -29,7 +42,7 @@ No plaintext registry or manifest parser, metadata relationship validation, tree
 | D11 — AAD ownership | AAD construction is in `vault-crypto`. The single authorized internal edge is `vault-crypto → vault-format`; the architecture validator checks its exact workspace path, version and feature policy. |
 | D12 — Unicode/dependencies | No new third-party dependency was added. The 1,456-entry case table is derived from observable Java 21 `Character` API results; no JDK implementation source or third-party Unicode table was copied. Its runtime/version provenance is recorded below. |
 | D13 — test provenance | UUID, name and AAD cases use deterministic synthetic values. No private Java fixture or vector file was copied. OQ-06 remains deferred. |
-| D14 — gates | New contract tests, Java differential checks, parser regressions, architecture tests, strict Rust quality checks and exact-SHA hosted CI are required. Independent review remains pending. |
+| D14 — gates | Contract tests, Java differential checks, Phase 2A-2/2A-3 parser regressions, architecture validation and strict Rust quality checks passed. Windows CI passed on dev and on the same SHA after strict fast-forward integration into main. Independent Claude review completed with verdict CONDITIONALLY APPROVED; the owner accepted its two findings as nonblocking and open. See the CI and review records below. |
 
 The approved operational collision rules for later manifest integration remain: active siblings participate; deleted siblings do not reserve a name; files and folders share one sibling namespace; a rename excludes itself; equivalent names under different parents can coexist. This phase implements only the pure comparator and no sibling collection or mutation engine.
 
@@ -110,14 +123,41 @@ Local checks on Windows/MSVC used Rust/Cargo 1.99.1. The exact commands and curr
 | `cargo test -p vault-crypto --locked` | PASS: 6 AAD golden tests. |
 | `pwsh ./scripts/verify-java-unicode-compat.ps1` | PASS: corpus and mapping results recorded above. |
 | `pwsh ./scripts/verify-architecture.ps1` and `pwsh ./scripts/tests/verify-architecture.tests.ps1` | PASS. |
-| Build-manifest rejection suite | PASS; Windows junction/reparse subcase BLOCKED by `NewItemCreateIOError`. |
-| Shell/preview isolation suite | PASS, 42 negative cases rejected; Windows junction/reparse subcase BLOCKED by `NewItemCreateIOError`. |
+| Historical local build-manifest rejection suite | PASS; its Windows junction/reparse subcase was BLOCKED by `NewItemCreateIOError`. |
+| Historical local shell/preview isolation suite | PASS, 42 negative cases rejected; its Windows junction/reparse subcase was BLOCKED by `NewItemCreateIOError`. |
 | Dependency-inventory regression suite | PASS. |
 | PowerShell wrapper regression suite | PASS. |
 | Windows Release build scripts | Both shell and design-preview built and their manifest/native import inventory verified. The first local run recorded the starting commit with `dirty=true`; exact final-commit artifact identity is not claimed from that run. |
 | `git diff --check` | PASS before commits. |
 
-The existing workflow runs formatting, locked workspace check, strict Clippy, default and design-preview tests, PowerShell regression suites, architecture checks, separate Windows Release builds, artifact verification and native dependency inventory on `push`. The standalone Java oracle is not invoked by the current workflow; its pinned differential run is a separate local acceptance result. The exact final `dev` SHA, hosted run URL/ID and job outcomes will be attributed in the implementation handoff after publication; no result is claimed here before that run exists.
+## Hosted Windows CI evidence
+
+The workflow `.github/workflows/ci.yml` provisions Oracle JDK 21.0.2 for Windows x64, verifies the exact runtime identity `21.0.2+13-LTS-58`, and runs `scripts/verify-java-unicode-compat.ps1` as a required job step. A nonzero oracle result fails the job. The Java runtime is used only as a compatibility oracle.
+
+Both approved runs used the integrated SHA `d035c746a97ab26a5081965d7e2a78d9021328d5`, attempt 1, event `push`, and completed with conclusion `success`:
+
+- [Dev Windows Rust CI, run 42164593395](https://github.com/Fabianrodas/encryptdrive-desktop/actions/runs/42164593395)
+- [Main Windows Rust CI, run 42171664331](https://github.com/Fabianrodas/encryptdrive-desktop/actions/runs/42171664331)
+
+The hosted job logs record the Oracle runtime identity, Java differential corpus and zero mismatches. The synthetic differential scope was 1,112,064 valid Unicode scalar values, of which Java classified 25 as whitespace; 1,456 Unicode mapping entries; and 14,418 `equalsIgnoreCase` comparisons using seed `454E435259505444`. Both hosted runs reported zero differential mismatches. This evidence covers the stated synthetic API corpus only; it does not prove complete Java/Rust application interoperability.
+
+The hosted Windows logs also report 43 negative shell-isolation cases rejected and successful junction/reparse rejection checks, including rejection of a junction inside the scanned source tree and an artifact path traversing a junction. These hosted results are separate from the historical local observations above; they do not automatically close prior Phase 1B findings.
+
+The completed job passed formatting, locked workspace checks, strict Clippy, default and design-preview checks/tests, manifest and PowerShell regression suites, shell/preview isolation, architecture validation, separate Windows Release builds, artifact verification and dependency inventory verification.
+
+## Independent review and owner disposition
+
+Independent Claude Code review completed for the Phase 2A-4 implementation. The review examined canonical UUID handling, Java 21 `String.strip()` and `String.equalsIgnoreCase()` behavior, Unicode mapping data, NAME-01 through NAME-06, six AAD byte contracts and outputs against the Java reference, the authorized crate dependency, architecture validation, the differential oracle, CI integrity and regression tests.
+
+The exact verdict was **CONDITIONALLY APPROVED**, with P0: 0, P1: 0 and P2: 2. The owner accepted P2-01 and P2-02 as nonblocking findings that remain open; this did not resolve either finding. P2-01 remains open until this documentation correction is validated, independently reviewed and receives its separate integration disposition. P2-02 remains OPEN — NONBLOCKING — ACCEPTED FOR TRACKING.
+
+## Oracle archive integrity and licensing status
+
+**P2-02 — OPEN — NONBLOCKING — ACCEPTED FOR TRACKING.** The pinned `actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78` implementation requests Oracle's `.sha256` sidecar and verifies the archive against it when the sidecar is available; a checksum mismatch fails installation. The pinned implementation can continue when the sidecar request returns HTTP 404, without checksum verification. The workflow does not independently pin an expected archive SHA-256, and the hosted logs do not establish which checksum branch was taken. The exact runtime identity check confirms vendor/version/runtime properties, not archive bytes. See the pinned [Oracle installer](https://github.com/actions/setup-java/blob/77dd5b2ce225ea11469928ac317850245a74ae78/src/distributions/oracle/installer.ts) and [base installer](https://github.com/actions/setup-java/blob/77dd5b2ce225ea11469928ac317850245a74ae78/src/distributions/base-installer.ts).
+
+Oracle's published SHA-256 for the selected Windows x64 archive is `776afe55020560f175d8099710d8ac07c4d40772c694385c3dd765117cbd0ac3` ([Oracle checksum sidecar](https://download.oracle.com/java/21/archive/jdk-21.0.2_windows-x64_bin.zip.sha256)). Recording this vendor value does not show that the workflow independently pinned or verified it. A separately downloaded, explicitly hash-verified archive used through the setup action's `jdkfile` mechanism remains a future, separately authorized provisioning decision; it is not implemented here.
+
+**LIC-01 — OPEN / FORMAL LEGAL REVIEW UNVERIFIED.** Oracle identifies JDK 21.0.2 as a release under the Oracle No-Fee Terms and Conditions. The intended use is downloading it from Oracle's official distribution infrastructure and running synthetic compatibility tests in hosted CI. The JDK is not modified, included in EncryptDrive artifacts or redistributed. That narrow development/testing use appears consistent with the [JDK 21 archive information](https://www.oracle.com/java/technologies/javase/jdk21-archive-downloads.html), [Oracle Java FAQ](https://www.oracle.com/java/technologies/javase/jdk-faqs.html) and [No-Fee Terms and Conditions](https://www.oracle.com/downloads/licenses/no-fee-license.html). This is not a formal legal opinion or binding legal clearance. Redistribution is not authorized, and Windows release licensing requirements remain separate.
 
 ## Deferred decisions and gates
 
@@ -130,4 +170,4 @@ The existing workflow runs formatting, locked workspace check, strict Clippy, de
 - Phase 1B P2-F01 through P2-F04 and its compact-layout residual observation remain open. Windows N01–N09 remain NOT RUN / UNVERIFIED; B01–B04 remain BLOCKED.
 - Windows distribution, accessibility certification, Narrator/UI Automation, High Contrast, packaging, reproducible build certification, licensing and release gates are unchanged.
 
-The final `dev` diff must receive independent Claude Code review from baseline `9beb0b7ebb3cd84b88e16b454f41e526304c29f1` before any owner disposition for integration. This record and its implementation do not authorize `main` integration, Phase 2A-5 or Phase 2A-6.
+The Phase 2A-4 implementation is integrated into `main` and `dev` at `d035c746a97ab26a5081965d7e2a78d9021328d5`; this does not assert full VF1 conformance, complete cryptographic interoperability, real vault functionality or Windows release readiness. The P2-01 documentation correction must receive focused independent Claude Code review from `d035c746a97ab26a5081965d7e2a78d9021328d5` to its new documentation commit after exact-SHA hosted CI. This record does not authorize integration of that correction into `main`, Phase 2A-5 or Phase 2A-6.
