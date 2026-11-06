@@ -1,3 +1,4 @@
+use crate::identifiers::{parse_canonical_uuid_bytes, write_uuid};
 use crate::strict_json::{
     ExactNumberError, JsonError, JsonKind, SchemaObjectError, StrictDocument, ValueSpan,
     parse_exact_u64, schema_fields,
@@ -77,21 +78,28 @@ impl fmt::Debug for ParsedUnauthenticatedVaultHeader {
 pub struct VaultId([u8; 16]);
 
 impl VaultId {
+    /// Parses exactly 36-character canonical lowercase UUID text.
+    ///
+    /// This validates text representation only. It does not constrain UUID version or variant
+    /// bits and does not generate an identifier.
+    pub fn from_canonical_str(text: &str) -> Result<Self, crate::IdentifierParseError> {
+        parse_canonical_uuid_bytes(text).map(Self)
+    }
+
     /// Returns the 16 decoded UUID bytes.
     pub const fn as_bytes(&self) -> &[u8; 16] {
         &self.0
+    }
+
+    /// Returns canonical lowercase UUID text in a fixed-size byte array.
+    pub fn to_canonical_bytes(self) -> [u8; 36] {
+        crate::identifiers::format_uuid_bytes(&self.0)
     }
 }
 
 impl fmt::Display for VaultId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (index, byte) in self.0.iter().enumerate() {
-            if matches!(index, 4 | 6 | 8 | 10) {
-                formatter.write_str("-")?;
-            }
-            write!(formatter, "{byte:02x}")?;
-        }
-        Ok(())
+        write_uuid(&self.0, formatter)
     }
 }
 
@@ -471,36 +479,8 @@ fn parse_wrapped_registry_key(
 
 fn parse_vault_id(bytes: &[u8], span: ValueSpan) -> Result<VaultId, HeaderParseError> {
     let text = parse_string(bytes, span, "vaultId")?;
-    let bytes = text.as_bytes();
-    if bytes.len() != 36 || !bytes.is_ascii() {
-        return Err(HeaderParseError::InvalidIdentifier);
-    }
-
-    let mut decoded = [0_u8; 16];
-    let mut output = 0;
-    let mut high_nibble = None;
-    for (position, byte) in bytes.iter().copied().enumerate() {
-        if matches!(position, 8 | 13 | 18 | 23) {
-            if byte != b'-' {
-                return Err(HeaderParseError::InvalidIdentifier);
-            }
-            continue;
-        }
-        let digit = match byte {
-            b'0'..=b'9' => byte - b'0',
-            b'a'..=b'f' => byte - b'a' + 10,
-            _ => return Err(HeaderParseError::InvalidIdentifier),
-        };
-        if let Some(high) = high_nibble.take() {
-            decoded[output] = (high << 4) | digit;
-            output += 1;
-        } else {
-            high_nibble = Some(digit);
-        }
-    }
-    if output != decoded.len() || high_nibble.is_some() {
-        return Err(HeaderParseError::InvalidIdentifier);
-    }
+    let decoded =
+        parse_canonical_uuid_bytes(&text).map_err(|_| HeaderParseError::InvalidIdentifier)?;
     Ok(VaultId(decoded))
 }
 

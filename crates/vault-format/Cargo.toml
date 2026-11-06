@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish = false
-description = "Bounded structural parsing for unauthenticated EncryptDrive VF1 headers"
+description = "Bounded VF1 structural parsing, canonical identifiers, and Java-compatible logical names"
 
 [lib]
 path = "src/lib.rs"

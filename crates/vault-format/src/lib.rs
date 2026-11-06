@@ -10,6 +10,9 @@ use std::fmt;
 
 mod external_envelope;
 mod header;
+mod identifiers;
+mod java_case_fold;
+mod logical_name;
 mod strict_json;
 
 pub use external_envelope::{
@@ -19,6 +22,10 @@ pub use external_envelope::{
 pub use header::{
     HeaderParseError, ParsedUnauthenticatedVaultHeader, StoredKdfAlgorithm, StoredKdfParameters,
     UnauthenticatedEncryptedEnvelope, VaultId, parse_vault_header,
+};
+pub use identifiers::{EntryId, IdentifierParseError, UserId};
+pub use logical_name::{
+    LogicalNameError, logical_name_eq_ignore_case, strip_java_whitespace, validate_logical_name,
 };
 
 /// The currently specified on-disk Vault Format version.
