@@ -2917,6 +2917,9 @@ dependencies = [
 [[package]]
 name = "vault-crypto"
 version = "0.1.0"
+dependencies = [
+ "vault-format",
+]
 
 [[package]]
 name = "vault-format"

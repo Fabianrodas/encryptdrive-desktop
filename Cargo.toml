@@ -22,3 +22,4 @@ rust-version = "1.95"
 eframe = { version = "=0.37.0", default-features = false, features = ["accesskit", "default_fonts", "system_fonts", "wgpu"] }
 egui_extras = { version = "=0.37.0", default-features = false }
 encryptdrive-core = { path = "crates/encryptdrive-core", version = "0.1.0" }
+vault-format = { path = "crates/vault-format", version = "=0.1.0", default-features = false }

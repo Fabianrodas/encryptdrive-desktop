@@ -59,8 +59,23 @@ $vaultFormat = $unsafeFeatures.packages | Where-Object { $_.name -ceq 'vault-for
 Assert-Rejected { Assert-WorkspaceArchitecture -Metadata $unsafeFeatures } 'unbounded serde_json depth' 'features must be exactly'
 
 $extraLowerDependency = $metadataJson | ConvertFrom-Json
-$vaultCrypto = $extraLowerDependency.packages | Where-Object { $_.name -ceq 'vault-crypto' }
-$vaultCrypto.dependencies = @($vaultCrypto.dependencies) + [pscustomobject]@{ name = 'vault-format' }
-Assert-Rejected { Assert-WorkspaceArchitecture -Metadata $extraLowerDependency } 'lower-crate boundary change' 'unexpected direct dependencies'
+$vaultStorage = $extraLowerDependency.packages | Where-Object { $_.name -ceq 'vault-storage' }
+$vaultStorage.dependencies = @($vaultStorage.dependencies) + [pscustomobject]@{ name = 'vault-format' }
+Assert-Rejected { Assert-WorkspaceArchitecture -Metadata $extraLowerDependency } 'unauthorized lower-crate edge' 'unexpected direct dependencies'
+
+$missingAuthorizedEdge = $metadataJson | ConvertFrom-Json
+$vaultCrypto = $missingAuthorizedEdge.packages | Where-Object { $_.name -ceq 'vault-crypto' }
+$vaultCrypto.dependencies = @()
+Assert-Rejected { Assert-WorkspaceArchitecture -Metadata $missingAuthorizedEdge } 'missing authorized AAD edge' 'unexpected direct dependencies'
+
+$unpinnedInternalEdge = $metadataJson | ConvertFrom-Json
+$vaultCrypto = $unpinnedInternalEdge.packages | Where-Object { $_.name -ceq 'vault-crypto' }
+($vaultCrypto.dependencies | Where-Object { $_.name -ceq 'vault-format' }).req = '^0.1.0'
+Assert-Rejected { Assert-WorkspaceArchitecture -Metadata $unpinnedInternalEdge } 'unpinned internal vault-format edge' 'exact workspace version requirement'
+
+$externalInternalPath = $metadataJson | ConvertFrom-Json
+$vaultCrypto = $externalInternalPath.packages | Where-Object { $_.name -ceq 'vault-crypto' }
+($vaultCrypto.dependencies | Where-Object { $_.name -ceq 'vault-format' }).path = (Join-Path $env:TEMP 'unexpected-vault-format')
+Assert-Rejected { Assert-WorkspaceArchitecture -Metadata $externalInternalPath } 'unexpected internal package path' 'must depend on the vault-format package in this workspace'
 
 Write-Output 'Architecture validator regression checks passed: approved declarations accepted; unexpected dependency, version, feature, and lower-crate boundary changes rejected.'

@@ -21,7 +21,7 @@ function Assert-WorkspaceArchitecture {
         "encryptdrive-desktop" = @("eframe", "egui_extras", "encryptdrive-core")
         "encryptdrive-core" = @()
         "vault-format" = @("base64", "serde", "serde_json", "time")
-        "vault-crypto" = @()
+        "vault-crypto" = @("vault-format")
         "vault-storage" = @()
     }
 
@@ -84,7 +84,34 @@ function Assert-WorkspaceArchitecture {
         }
     }
 
-    Write-Output "Workspace membership, crate boundaries, and approved vault-format dependency declarations verified."
+    $vaultCrypto = $Metadata.packages | Where-Object { $_.name -ceq "vault-crypto" }
+    $vaultFormatPackage = $Metadata.packages | Where-Object { $_.name -ceq "vault-format" }
+    $vaultCryptoFormat = @($vaultCrypto.dependencies | Where-Object { $_.name -ceq "vault-format" })
+    if ($vaultCryptoFormat.Count -ne 1) {
+        throw "vault-crypto must declare exactly one internal vault-format dependency."
+    }
+    $approvedVaultCryptoDependency = $vaultCryptoFormat[0]
+    if ($approvedVaultCryptoDependency.req -cne "=0.1.0") {
+        throw "vault-crypto vault-format must use the exact workspace version requirement =0.1.0."
+    }
+    if ($null -ne $approvedVaultCryptoDependency.source -or
+        $approvedVaultCryptoDependency.uses_default_features -ne $false -or
+        $approvedVaultCryptoDependency.optional -ne $false -or
+        $null -ne $approvedVaultCryptoDependency.target -or
+        $null -ne $approvedVaultCryptoDependency.registry -or
+        $null -ne $approvedVaultCryptoDependency.rename -or
+        $null -ne $approvedVaultCryptoDependency.kind -or
+        @($approvedVaultCryptoDependency.features).Count -ne 0) {
+        throw "vault-crypto vault-format must remain a required internal path dependency with default features disabled."
+    }
+    $expectedVaultFormatPath = [System.IO.Path]::GetFullPath($vaultFormatPackage.manifest_path)
+    $expectedVaultFormatPath = [System.IO.Path]::GetDirectoryName($expectedVaultFormatPath)
+    $actualVaultFormatPath = [System.IO.Path]::GetFullPath($approvedVaultCryptoDependency.path)
+    if (-not [string]::Equals($actualVaultFormatPath, $expectedVaultFormatPath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "vault-crypto must depend on the vault-format package in this workspace."
+    }
+
+    Write-Output "Workspace membership, crate boundaries, approved vault-format declarations, and the authorized vault-crypto -> vault-format edge verified."
 }
 
 Export-ModuleMember -Function Assert-WorkspaceArchitecture

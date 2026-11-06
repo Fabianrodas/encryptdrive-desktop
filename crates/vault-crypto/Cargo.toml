@@ -8,3 +8,6 @@ description = "Reserved boundary for future EncryptDrive cryptographic implement
 
 [lib]
 path = "src/lib.rs"
+
+[dependencies]
+vault-format.workspace = true
